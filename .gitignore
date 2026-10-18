@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build / temp
+tmp/
+.tmp/
+dist/
+build/
+out/
+coverage/
+
+# artifacts
+*.tgz
+*.zip
+*.log
+logs/
+
+# local data
+*.sqlite
+*.sqlite3
+*.db
+.env
+.env.*
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

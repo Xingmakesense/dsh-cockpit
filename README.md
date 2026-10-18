@@ -1,0 +1,116 @@
+# DSH Cockpit
+
+DSH（DeepSeek Harness）套件插件：**自动续轮**、**会话归档管理**、**删除审计**与**孤儿附件清理**。
+
+> 不包含推理强度滑条；滑条由独立插件 `dsh-effort-slider` 提供。
+
+## 功能
+
+- **自动续轮**：请求失败后自动重新发起，**不向对话写入任何用户消息**；顶部内联提示显示第 N/M 次、故障码与原因。
+- **可调参数**：设置 → 插件 → 自动续轮，支持启用开关、续轮次数、延迟、单请求额外重试、提示开关，并实时显示总请求次数公式。
+- **会话归档**：已归档会话的检索、收藏、预览、恢复与永久删除（内置 upstream `@michengai/dsh-archive-manager` 代码，Apache-2.0）。
+- **删除审计**：每次删除写 JSONL，记录时间、操作者、会话 id 与结果。
+- **附件清理**：每 6 小时扫描一次，删除不再被任何存活会话引用的附件对象（保守策略，见下文）。
+
+## 环境要求
+
+- DSH Desktop `0.2.1-rc.2`（Web 客户端），Node.js 由 DSH 自带运行时提供
+- Windows / macOS / Linux 均可运行；安装脚本示例使用 PowerShell
+
+## 安装
+
+1. 打包（在仓库根目录）：
+
+   ```powershell
+   node <dsh-runtime>\pnpm\bin\pnpm.mjs pack --pack-destination <输出目录>
+   ```
+
+2. 在 DSH 的插件管理中安装生成的 `.tgz`（`plugin_manager → install_bundle`）。
+3. **完全重启** DSH Desktop 并刷新页面。
+
+安装后可在「设置 → 插件 → 自动续轮」看到配置页；归档入口在「设置 → 归档会话」。
+
+## 配置
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `enabled` | `true`（随包 patch） | 是否自动续轮 |
+| `maxAttempts` | `6` | 续轮上限（1–50） |
+| `delayMs` | `1500` | 进入 idle 后、投递前的等待（毫秒） |
+| `providerRetryMaxRetries` | `3` | 单次请求的额外重试数；用于预算公式展示 |
+| `emitProminentError` | `true` | 是否显示内联续轮提示 |
+| `retryableCodes` | `TRANSPORT`/`TIMEOUT`/`RATE_LIMIT`/`SERVER`/`EMPTY_RESPONSE`/`UNKNOWN` | 可续轮故障码 |
+| `blockedCodes` | `AUTH`/`QUOTA`/… | 不可续轮故障码 |
+
+总请求次数（仅展示）：
+
+```text
+（1 + providerRetryMaxRetries）×（1 + maxAttempts）
+```
+
+## 自动续轮是怎么工作的
+
+1. 监听 `agent/error`（唯一“真失败”信号），按故障码决定续轮或直接交还；
+2. agent 进入 `idle` 后，向 inbox 投递一条 `source.kind = "runtime-context"` 的消息；
+3. agent loop 消费该消息但不写入 transcript，请求由现有上下文重新组装——等价于“重发上一次请求”；
+4. 同时通过 `api-session/error` 发出一条提示文本，客户端渲染为输入框上方的细条。
+
+因此对话里不会出现“继续”消息，也不会产生用户消息。
+
+## 会话归档
+
+- 标题/正文检索、项目/收藏/日期筛选、快速预览
+- 收藏、单条/批量恢复、按项目归档
+- 永久删除（二次确认，仅归档 + 非活动会话）
+- 日志诊断与修复
+
+> 删除是硬删除，无回收站。删除前请确认目标会话可丢弃。
+
+## 删除审计与附件清理
+
+- 审计文件：`<DSH_HOME>/storages/cockpit-audit/session-deletions.jsonl`
+- 附件对象：`<DSH_HOME>/attachments/v1/objects`（内容寻址）
+- 清理规则：扫描所有存活会话转录，未被任何会话引用且超过 24 小时的对象才会删除；任一转录不可读或会话根为空时**整轮放弃**。
+
+## 测试
+
+```bash
+node verify-cockpit.cjs
+node verify-auto-continue.cjs
+node verify-archive.cjs
+node verify-client-ui.cjs
+node verify-maintenance.cjs
+```
+
+`client.js` 是生成物，改动 `vendor/archive-manager/lib/client.js` 或 `scripts/client-wrapper.js` 后执行：
+
+```bash
+node scripts/build-client.mjs        # 重新生成
+node scripts/build-client.mjs --check
+```
+
+## 项目结构
+
+```text
+host.js             入口，只做组装
+auto-continue.js    自动续轮引擎与 Config
+archive.js          挂载 vendored 归档 host
+maintenance.js      删除审计 + 孤儿附件清理
+client.js           客户端产物（生成物）
+scripts/            客户端生成脚本与发布脚本
+vendor/             vendored 归档实现与 schemastery/cosmokit 副本
+verify-*.cjs        回归测试
+MAINTAINERS.md      维护手册
+```
+
+## 兼容性与限制
+
+- 归档实现基于 upstream `@michengai/dsh-archive-manager@1.0.20`，其官方兼容声明止于 `0.2.1-alpha.3`；在 `0.2.1-rc.2` 上已验证归档页与常规操作。
+- 隐藏续轮依赖 agent loop 对 `runtime-context` 的过滤行为；DSH 升级后请先跑测试并确认对话中不出现多余消息。
+- 安装/热更新可能卡住 Loader 的 HMR 队列，安装后请完全重启。
+
+## 许可证
+
+- 本项目：MIT，见 [LICENSE](LICENSE)
+- `vendor/archive-manager`：Apache-2.0（保留原始 LICENSE，修改说明见 `vendor/archive-manager/MODIFICATIONS.md`）
+- `vendor/schemastery.mjs`、`vendor/cosmokit.mjs`：MIT 副本（见 `vendor/LICENSE.schemastery`、`vendor/LICENSE.cosmokit`）

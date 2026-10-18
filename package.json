@@ -1,0 +1,50 @@
+{
+  "name": "dsh-cockpit",
+  "version": "2.7.1",
+  "description": "DSH 驾驶舱套件：模块化的自动续轮（隐藏重试 + 内联提示 + 设置页）、会话归档管理、删除审计与孤儿附件清理（推理强度滑条由独立的 dsh-effort-slider 提供）。 · Suite with modular auto-continue, session-archive management, deletion audit and orphan-attachment cleanup; the reasoning slider lives in the standalone dsh-effort-slider package.",
+  "type": "module",
+  "main": "host.js",
+  "exports": {
+    ".": "./host.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "host.js",
+    "auto-continue.js",
+    "archive.js",
+    "maintenance.js",
+    "client.js",
+    "vendor",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "check": "node scripts/build-client.mjs --check && node --check host.js && node --check client.js",
+    "test": "node verify-cockpit.cjs && node verify-archive.cjs && node verify-auto-continue.cjs && node verify-client-ui.cjs && node verify-maintenance.cjs"
+  },
+  "keywords": [
+    "dsh",
+    "plugin",
+    "cockpit",
+    "auto-continue",
+    "archive",
+    "session-management"
+  ],
+  "author": "June M",
+  "license": "MIT"
+}

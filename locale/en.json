@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DSH Cockpit",
+    "description": "The auto-continue guard and session-archive management: retry after failures, search, favorite, restore, and permanently delete archived sessions."
+  }
+}

@@ -1,0 +1,15 @@
+# dsh-cockpit bundle patch.
+# The independent slider package (dsh-effort-slider) is installed separately.
+#
+# `continueText` / `haltText` are no longer written into the conversation (the
+# retry is a hidden runtime-context wake and notices are client-side), so they
+# are omitted here. The Config schema still accepts them for compatibility.
+- insert:
+    - id: cockpit
+      name: dsh-cockpit
+      config:
+        enabled: true
+        maxAttempts: 6
+        providerRetryMaxRetries: 3
+        delayMs: 1500
+        emitProminentError: true

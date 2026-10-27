@@ -147,11 +147,11 @@ function main() {
         startedAt: 1000,
         updatedAt: 1000
     };
-    downloadStore.update(liveProgress);
-    downloadStore.update({ ...liveProgress, receivedBytes: 3072, updatedAt: 2000 });
+    downloadStore.replace([liveProgress]);
+    downloadStore.replace([{ ...liveProgress, receivedBytes: 3072, updatedAt: 2000 }]);
     const downloadText = textOf(downloadCard.component({ store: downloadStore }));
     assert(downloadText.includes("3.0 KB · 1.5 KB/s"), `download card must show live bytes and speed, got: ${downloadText}`);
-    downloadStore.update({ ...liveProgress, receivedBytes: 3072, state: "completed", updatedAt: 2100 });
+    downloadStore.replace([]);
     assert(downloadCard.component({ store: downloadStore }) === null, "completed downloads must leave the active card");
 
     assert(!registrations.some((entry) => entry.definition.name === "settings.action"), "empty-session cleanup must not depend on the unreliable global settings header");
@@ -168,6 +168,7 @@ function main() {
     );
     assert(tabProps.workspaceRegistry === remote.workspaceRegistry, "settings page must receive the empty-session cleanup remote");
     const settingsText = textOf(tab.component({ t: (key) => key, ...tabProps }));
+    assert(settingsText.includes("emptyCleanupTitle"), "the auto-continue page must render the visible empty-session cleanup section");
     assert(settingsText.includes("emptyCleanup"), "the auto-continue page must render the empty-session cleanup button");
 
     const relay = subscribed.find((entry) => entry.event === "api-session/error");

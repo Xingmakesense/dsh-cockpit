@@ -8,6 +8,7 @@ async function main() {
     const handlers = new Map();
     const emitted = [];
     const effects = [];
+    let registeredRoute;
     const ctx = {
         logger: { warn() {} },
         on(event, handler) {
@@ -22,11 +23,23 @@ async function main() {
         emit(event, ...args) {
             emitted.push({ event, args });
         },
+        get(name) {
+            if (name !== "connection") return undefined;
+            return {
+                fetch: {
+                    register(route) {
+                        registeredRoute = route;
+                        return () => {};
+                    }
+                }
+            };
+        },
         inject() {}
     };
     installDownloads(ctx);
     const onRequest = handlers.get("connection/request");
     assert(typeof onRequest === "function", "download observation must wrap connection/request");
+    assert(registeredRoute?.path === "/api/cockpit/downloads", "downloads must expose the polling snapshot route");
 
     const headers = {
         "content-disposition": 'attachment; filename="dsh-session-example.zip"',
@@ -59,7 +72,13 @@ async function main() {
     assert(nextCalled === 1, "the original connection bridge must be called exactly once");
     response.writeHead(200);
     response.write("abc");
+    const liveSnapshot = await registeredRoute.fetch(new Request("http://localhost/api/cockpit/downloads"));
+    const liveBody = await liveSnapshot.json();
+    assert(liveSnapshot.headers.get("cache-control") === "no-store", "download snapshots must not be cached");
+    assert(liveBody.downloads.length === 1 && liveBody.downloads[0].receivedBytes === 3, "polling must expose live bytes before completion");
     response.end("def");
+    const completedSnapshot = await registeredRoute.fetch(new Request("http://localhost/api/cockpit/downloads"));
+    assert((await completedSnapshot.json()).downloads.length === 0, "completed downloads must leave the polling snapshot");
 
     assert(emitted.length === 2, "a small download must emit start and completion without redundant progress");
     const [start, completed] = emitted;

@@ -53,6 +53,8 @@ window.__ModuleLoader__.load({
                 registered: "已注册：",
                 requestUnit: "次",
                 emptyCleanup: "清除空对话",
+                emptyCleanupTitle: "空对话清理",
+                emptyCleanupDescription: "预览并永久删除没有真实内容的会话；删除前会显示候选数量并要求确认。",
                 emptyNone: "没有可清理的空对话",
                 emptyConfirm: "发现 {count} 个空对话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
                 emptyDeleteConfirm: "确认删除",
@@ -88,6 +90,8 @@ window.__ModuleLoader__.load({
                 registered: "Registered: ",
                 requestUnit: "requests",
                 emptyCleanup: "Clear empty chats",
+                emptyCleanupTitle: "Empty chat cleanup",
+                emptyCleanupDescription: "Preview and permanently delete sessions without real content. The candidate count is shown before you confirm.",
                 emptyNone: "No empty chats to clear",
                 emptyConfirm: "{count} empty chats will be permanently deleted ({skipped} skipped). This cannot be undone.",
                 emptyDeleteConfirm: "Delete permanently",
@@ -198,6 +202,26 @@ window.__ModuleLoader__.load({
                             samples.set(record.id, rows);
                         }
                     }
+                    publish();
+                },
+                /** Replace the whole active set from the Host's polling endpoint. */
+                replace(records) {
+                    const activeIds = new Set();
+                    for (const record of Array.isArray(records) ? records : []) {
+                        if (!record || typeof record.id !== "string" || record.state !== "downloading") continue;
+                        activeIds.add(record.id);
+                        const previous = items.get(record.id);
+                        items.set(record.id, { ...previous, ...record });
+                        if (!previous || previous.receivedBytes !== record.receivedBytes) {
+                            const time = Number(record.updatedAt) || Date.now();
+                            const rows = [...(samples.get(record.id) ?? []), { time, bytes: record.receivedBytes }]
+                                .filter((row) => time - row.time <= 2500)
+                                .slice(-12);
+                            samples.set(record.id, rows);
+                        }
+                    }
+                    for (const id of [...items.keys()]) if (!activeIds.has(id)) items.delete(id);
+                    for (const id of [...samples.keys()]) if (!activeIds.has(id)) samples.delete(id);
                     publish();
                 },
                 clear() {
@@ -321,7 +345,7 @@ window.__ModuleLoader__.load({
                     type: "button",
                     disabled: busy,
                     onClick: preview,
-                    style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 },
+                    style: { ...buttonStyle, padding: "6px 14px", fontSize: 12, opacity: busy ? 0.55 : 1 },
                     title: t("emptyCleanup")
                 }, busy ? "…" : t("emptyCleanup")),
                 state.phase !== "idle" ? h("span", {
@@ -596,8 +620,24 @@ window.__ModuleLoader__.load({
             return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
                 h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("title")),
                 h("p", { style: { margin: "0 0 18px", fontSize: 13, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, t("description")),
-                h("div", { style: { display: "flex", justifyContent: "flex-end", margin: "0 0 16px" } },
-                    h(EmptySessionCleanup, { t, workspaceRegistry })
+                h("div", {
+                    style: {
+                        ...cardBase,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: 16,
+                        marginBottom: 16,
+                        padding: "14px 16px",
+                        boxShadow: "none"
+                    }
+                },
+                h("div", { style: { flex: "1 1 260px", minWidth: 0 } },
+                    h("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 4 } }, t("emptyCleanupTitle")),
+                    h("div", { style: { fontSize: 12, lineHeight: 1.5, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, t("emptyCleanupDescription"))
+                ),
+                h(EmptySessionCleanup, { t, workspaceRegistry })
                 ),
                 state.phase === "loading" ? h("div", { style: { fontSize: 13 } }, t("loading")) : null,
                 state.phase === "unavailable"
@@ -702,10 +742,44 @@ window.__ModuleLoader__.load({
                                 });
                                 return () => {
                                     if (typeof offNotices === "function") offNotices();
-                                    downloadStore.clear();
                                 };
                             }, "dsh-cockpit: notice and download relays");
                         }
+
+                        // Host progress is authoritative. Polling this small
+                        // same-origin endpoint works even when the Remote event
+                        // relay filters a record whose resource id is unrelated
+                        // to the active Session.
+                        uiCtx.effect(() => {
+                            if (typeof document === "undefined" || typeof fetch !== "function") return;
+                            let stopped = false;
+                            let timer;
+                            const poll = async () => {
+                                let delay = 1200;
+                                try {
+                                    const response = await fetch("api/cockpit/downloads", {
+                                        method: "GET",
+                                        cache: "no-store",
+                                        headers: { accept: "application/json" }
+                                    });
+                                    if (response.ok) {
+                                        const body = await response.json();
+                                        const downloads = Array.isArray(body?.downloads) ? body.downloads : [];
+                                        downloadStore.replace(downloads);
+                                        delay = downloads.length > 0 ? 300 : 1200;
+                                    }
+                                } catch {
+                                    /* an unavailable route leaves the event path intact */
+                                }
+                                if (!stopped) timer = setTimeout(poll, delay);
+                            };
+                            poll();
+                            return () => {
+                                stopped = true;
+                                clearTimeout(timer);
+                                downloadStore.clear();
+                            };
+                        }, "dsh-cockpit: download progress polling");
 
                         uiCtx.slots.inject("conversation.session.header.utilities", () => uiCtx.slots.register({
                             name: "conversation.session.header.utilities",

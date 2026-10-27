@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 
 export const DOWNLOAD_PREFIX = "【下载】";
+/** Exact same-origin route the Client polls for active download snapshots. */
+export const DOWNLOAD_ROUTE = "/api/cockpit/downloads";
 const PROGRESS_INTERVAL_MS = 200;
 
 function header(response, name) {
@@ -73,6 +75,19 @@ function requestSessionId(requestUrl) {
 /** Install Host response observation and the Client progress event source. */
 export function installDownloads(ctx) {
     const active = new Map();
+    const snapshot = () => [...active.values()].map((record) => ({ ...record }));
+    const route = {
+        path: DOWNLOAD_ROUTE,
+        methods: ["GET"],
+        requestBody: "buffered",
+        fetch: async () => new Response(JSON.stringify({ downloads: snapshot() }), {
+            status: 200,
+            headers: {
+                "content-type": "application/json; charset=utf-8",
+                "cache-control": "no-store"
+            }
+        })
+    };
     const publish = {
         emit(record) {
             if (typeof ctx.emit === "function") {
@@ -84,6 +99,23 @@ export function installDownloads(ctx) {
         }
     };
     let nextProgressId = 0;
+
+    try {
+        const connection = typeof ctx.get === "function" ? ctx.get("connection") : ctx.connection;
+        if (connection?.fetch?.register) {
+            ctx.effect(() => connection.fetch.register(route), "dsh-cockpit: download progress route");
+        } else if (typeof ctx.inject === "function") {
+            ctx.inject(["connection"], (scope) => {
+                scope.effect(() => scope.connection.fetch.register(route), "dsh-cockpit: download progress route");
+            });
+        }
+    } catch (error) {
+        try {
+            ctx.logger.warn(`[dsh-cockpit] download progress route skipped: ${error?.message ?? error}`);
+        } catch {
+            /* observation must never break a download */
+        }
+    }
 
     const finish = (record, state) => {
         if (!record || record.state !== "downloading") return;

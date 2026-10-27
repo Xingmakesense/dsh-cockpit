@@ -1607,7 +1607,7 @@ window.__ModuleLoader__.load({
             };
         }
 
-        function SettingsPage({ t, settings }) {
+        function SettingsPage({ t, settings, workspaceRegistry }) {
             const [state, setState] = React.useState({ phase: "loading", view: null, draft: null, error: null, available: [] });
             const [saveState, setSaveState] = React.useState("idle");
 
@@ -1693,6 +1693,9 @@ window.__ModuleLoader__.load({
             return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
                 h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("title")),
                 h("p", { style: { margin: "0 0 18px", fontSize: 13, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, t("description")),
+                h("div", { style: { display: "flex", justifyContent: "flex-end", margin: "0 0 16px" } },
+                    h(EmptySessionCleanup, { t, workspaceRegistry })
+                ),
                 state.phase === "loading" ? h("div", { style: { fontSize: 13 } }, t("loading")) : null,
                 state.phase === "unavailable"
                     ? h("div", { style: { fontSize: 13, color: "#e8a33d", marginBottom: 8 } },
@@ -1808,13 +1811,6 @@ window.__ModuleLoader__.load({
                             locale: NS,
                             inject: () => ({ store: downloadStore })
                         }, DownloadActivityCard));
-                        uiCtx.slots.inject("settings.action", () => uiCtx.slots.register({
-                            name: "settings.action",
-                            id: "cockpit-empty-session-cleanup",
-                            order: 10,
-                            locale: NS,
-                            inject: () => ({ t, workspaceRegistry: remote?.workspaceRegistry })
-                        }, EmptySessionCleanup));
                         uiCtx.slots.inject("conversation.input.dock", () => uiCtx.slots.register({
                             name: "conversation.input.dock",
                             id: "cockpit-auto-continue-notice",
@@ -1829,7 +1825,7 @@ window.__ModuleLoader__.load({
                             order: 100,
                             label: () => t("tab"),
                             locale: NS,
-                            inject: () => ({ t, settings })
+                            inject: () => ({ t, settings, workspaceRegistry: remote?.workspaceRegistry })
                         }, SettingsPage));
                     }
                 };

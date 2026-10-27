@@ -85,7 +85,7 @@ function checkClientArtifact() {
         '"api-session/error"',
         'id: "cockpit-download-activity"',
         '【下载】',
-        'id: "cockpit-empty-session-cleanup"'
+        'h(EmptySessionCleanup, { t, workspaceRegistry })'
     ]) {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
     }

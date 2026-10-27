@@ -64,12 +64,14 @@ async function main() {
     assert(emitted.length === 2, "a small download must emit start and completion without redundant progress");
     const [start, completed] = emitted;
     assert(start.event === "api-session/error" && completed.event === "api-session/error", "download must use the compatible relay");
+    assert(start.args[0] === "example" && completed.args[0] === "example", "download events must use the real session resource id, not the random download id");
     const first = JSON.parse(start.args[1].slice(DOWNLOAD_PREFIX.length));
     const last = JSON.parse(completed.args[1].slice(DOWNLOAD_PREFIX.length));
     assert(first.filename === "dsh-session-example.zip" && first.extension === ".zip", "filename and extension must be preserved");
     assert(first.receivedBytes === 0 && first.totalBytes === 6 && first.state === "downloading", "start metadata is invalid");
     assert(last.receivedBytes === 6 && last.totalBytes === 6 && last.state === "completed", "completion must count exact bytes");
     assert(first.id === last.id, "one response must keep one download id");
+    assert(first.sessionId === "example" && first.sessionId !== first.id, "the progress record must retain its real session id");
 
     // A streamed ZIP has no Content-Length. Intermediate response.write calls
     // must still publish real byte deltas instead of only start/completion.
@@ -106,6 +108,7 @@ async function main() {
         streamed.write(Buffer.from([3, 4, 5]));
         streamed.end();
         assert(emitted.length === 3, "streamed bytes must emit start, throttled live progress, and completion");
+        assert(emitted.every((entry) => entry.args[0] === "streamed"), "every streamed progress event must pass Remote session resource filtering");
         const progress = JSON.parse(emitted[1].args[1].slice(DOWNLOAD_PREFIX.length));
         assert(progress.state === "downloading" && progress.receivedBytes === 5, "live progress must count every streamed byte");
         assert(progress.totalBytes === null, "an unknown stream length must stay null instead of inventing a percentage");

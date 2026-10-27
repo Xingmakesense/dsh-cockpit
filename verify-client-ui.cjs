@@ -26,6 +26,7 @@ function textOf(node) {
     if (node === null || node === void 0 || typeof node === "boolean") return "";
     if (Array.isArray(node)) return node.map(textOf).join("");
     if (typeof node === "string" || typeof node === "number") return String(node);
+    if (typeof node.type === "function") return textOf(node.type(node.props));
     return textOf(node.props?.children);
 }
 
@@ -153,17 +154,7 @@ function main() {
     downloadStore.update({ ...liveProgress, receivedBytes: 3072, state: "completed", updatedAt: 2100 });
     assert(downloadCard.component({ store: downloadStore }) === null, "completed downloads must leave the active card");
 
-    const emptyCleanup = registrations.find((entry) => entry.definition.name === "settings.action");
-    assert(emptyCleanup !== undefined, "empty-session cleanup must register into settings.action");
-    assert(emptyCleanup.definition.id === "cockpit-empty-session-cleanup", "empty-session cleanup id changed");
-    assert(typeof emptyCleanup.component === "function", "empty-session cleanup must receive a component");
-    assert(typeof emptyCleanup.definition.inject().workspaceRegistry === "object", "empty-session cleanup must receive the archive remote namespace");
-    const cleanupView = emptyCleanup.component({
-        t: (key) => key,
-        workspaceRegistry: remote.workspaceRegistry,
-        usePanelInfo: (selector) => selector({ id: "settings", activePanelId: "settings" })
-    });
-    assert(cleanupView !== null && textOf(cleanupView).includes("emptyCleanup"), "generic settings panel ids must not hide the archive cleanup button");
+    assert(!registrations.some((entry) => entry.definition.name === "settings.action"), "empty-session cleanup must not depend on the unreliable global settings header");
 
     const tab = registrations.find((entry) => entry.definition.name === "settings.plugins.tab");
     assert(tab !== undefined, "auto-continue settings page must register into settings.plugins.tab");
@@ -175,6 +166,9 @@ function main() {
         tabProps.settings !== undefined && typeof tabProps.settings.describe === "function",
         "settings page must receive ctx.remote.settings (a carrier-only remote has no .settings)"
     );
+    assert(tabProps.workspaceRegistry === remote.workspaceRegistry, "settings page must receive the empty-session cleanup remote");
+    const settingsText = textOf(tab.component({ t: (key) => key, ...tabProps }));
+    assert(settingsText.includes("emptyCleanup"), "the auto-continue page must render the empty-session cleanup button");
 
     const relay = subscribed.find((entry) => entry.event === "api-session/error");
     assert(relay !== undefined, "cockpit must subscribe to the compatible api-session/error relay");

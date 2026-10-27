@@ -61,13 +61,25 @@ function byteCount(chunk, encoding) {
     return Buffer.byteLength(String(chunk), typeof encoding === "string" ? encoding : "utf8");
 }
 
+function requestSessionId(requestUrl) {
+    try {
+        const value = new URL(requestUrl, "http://localhost").searchParams.get("sessionId");
+        return value && value.trim() ? value.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
 /** Install Host response observation and the Client progress event source. */
 export function installDownloads(ctx) {
     const active = new Map();
     const publish = {
         emit(record) {
             if (typeof ctx.emit === "function") {
-                ctx.emit("api-session/error", record.id, `${DOWNLOAD_PREFIX}${JSON.stringify(record)}`);
+                // api-session/error is resource-scoped: an invented download id
+                // is filtered before it reaches the Client. Session-log routes
+                // carry the real session id, which makes the relay deliverable.
+                ctx.emit("api-session/error", record.sessionId ?? record.id, `${DOWNLOAD_PREFIX}${JSON.stringify(record)}`);
             }
         }
     };
@@ -94,6 +106,7 @@ export function installDownloads(ctx) {
             const now = Date.now();
             record = {
                 id: `${now.toString(36)}-${(nextProgressId++).toString(36)}-${randomUUID().slice(0, 8)}`,
+                sessionId: requestSessionId(request.url),
                 filename: named.filename,
                 extension: named.extension,
                 receivedBytes: 0,

@@ -207,19 +207,18 @@ async function importMissingRecords(ctx, target, records, label, stillExists) {
   return imported;
 }
 async function importPreviousProjectionCache(ctx, target, currentTable) {
-  const sameSpec = projectionCacheDomainSpec.version === legacyProjectionCacheDomainSpec.version && projectionCacheDomainSpec.layout === legacyProjectionCacheDomainSpec.layout;
   const legacySafeV2 = await readLegacySafeRecords(ctx, legacySafeV2ProjectionCacheDomainSpec, "archive-manager v2");
   const legacySafe = await readLegacySafeRecords(ctx, legacySafeProjectionCacheDomainSpec, "archive-manager v1");
-  const legacy = sameSpec && currentTable !== void 0 ? { opened: true, records: [...currentTable.entries()] } : await readSourceRecords(ctx, legacyProjectionCacheDomainSpec, "legacy v3");
+  // The current official spec accepts its compatible predecessor records, so
+  // reading the same official domain again under the legacy v3 spec is wasted I/O.
+  const official = currentTable !== void 0
+    ? { opened: true, records: [...currentTable.entries()] }
+    : await readSourceRecords(ctx, projectionCacheDomainSpec, "official");
   let imported = 0;
   const stillExists = sessionExistenceProbe(ctx);
   if (legacySafeV2.opened) imported += await importMissingRecords(ctx, target, legacySafeV2.records, "archive-manager v2", stillExists);
   if (legacySafe.opened) imported += await importMissingRecords(ctx, target, legacySafe.records, "archive-manager v1", stillExists);
-  if (!sameSpec) {
-    const current = currentTable !== void 0 ? { opened: true, records: [...currentTable.entries()] } : await readSourceRecords(ctx, projectionCacheDomainSpec, "current");
-    if (current.opened) imported += await importMissingRecords(ctx, target, current.records, "current", stillExists);
-  }
-  if (legacy.opened) imported += await importMissingRecords(ctx, target, legacy.records, "legacy v3", stillExists);
+  if (official.opened) imported += await importMissingRecords(ctx, target, official.records, "official", stillExists);
   return imported;
 }
 

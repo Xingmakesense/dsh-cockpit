@@ -36,7 +36,7 @@
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
     "check": "node scripts/build-client.mjs --check && node --check host.js && node --check client.js",
-    "test": "node verify-cockpit.cjs && node verify-archive.cjs && node verify-auto-continue.cjs && node verify-client-ui.cjs && node verify-maintenance.cjs"
+    "test": "node verify-cockpit.cjs && node verify-archive.cjs && node verify-auto-continue.cjs && node verify-client-ui.cjs && node verify-downloads.cjs && node verify-maintenance.cjs"
   },
   "keywords": [
     "dsh",

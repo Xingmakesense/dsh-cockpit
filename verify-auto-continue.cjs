@@ -80,7 +80,7 @@ const failure = (code, message = `${code} failure`) => ({ failure: { code, messa
 
 async function main() {
     const { apply } = await import("./host.js");
-    const { Config, normalizeContinueConfig } = await import("./auto-continue.js");
+    const { Config, normalizeContinueConfig, overrideRetryPolicyForAllModels } = await import("./auto-continue.js");
 
     // --- config schema ---------------------------------------------------------
     assert(
@@ -92,6 +92,45 @@ async function main() {
         "Config must be a native volatile Schemastery schema (settings projection depends on it)"
     );
     assert(normalizeContinueConfig({ maxAttempts: 0 }).maxAttempts === 6, "invalid attempts must fall back");
+
+    // --- providerRetryMaxRetries actually overrides every provider's policy ---
+    {
+        const overridden = overrideRetryPolicyForAllModels({
+            retryPolicy: {
+                mode: "normal",
+                maxRetries: 5,
+                retryableCodes: ["TRANSPORT"],
+                initialDelayMs: 1000,
+                maxDelayMs: 30000,
+                jitterRatio: 0.2
+            }
+        }, normalizeContinueConfig({ providerRetryMaxRetries: 3 }));
+        assert(overridden.mode === "normal" && overridden.maxRetries === 3, "system maxRetries=5 must become 3");
+        assert(overridden.retryableCodes.length === 1 && overridden.initialDelayMs === 1000 && overridden.maxDelayMs === 30000 && overridden.jitterRatio === 0.2,
+            "provider-specific retry codes and backoff must be preserved");
+        const always = overrideRetryPolicyForAllModels({
+            retryPolicy: { mode: "always", initialDelayMs: 100, maxDelayMs: 1000, jitterRatio: 0 }
+        }, normalizeContinueConfig({ providerRetryMaxRetries: 3 }));
+        assert(always.mode === "normal" && always.maxRetries === 3, "an uncapped always policy must also become capped at 3");
+        const fallback = overrideRetryPolicyForAllModels({ retryPolicy: undefined }, normalizeContinueConfig({ providerRetryMaxRetries: 3 }));
+        assert(fallback.maxRetries === 3 && fallback.retryableCodes.includes("TIMEOUT"), "an absent provider policy must receive a complete default");
+    }
+    {
+        const { ctx, fire } = makeContext();
+        await apply(ctx, { enabled: true, providerRetryMaxRetries: 3 });
+        const { agent } = makeAgent();
+        const payload = {
+            agent,
+            turn: 1,
+            step: 1,
+            provider: "kimi",
+            failure: failure("TRANSPORT"),
+            retryPolicy: { mode: "normal", maxRetries: 5, retryableCodes: ["TRANSPORT"], initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 },
+            signal: new AbortController().signal
+        };
+        fire("agent/request-error", payload, () => Promise.resolve({ kind: "retry" }));
+        assert(payload.retryPolicy.maxRetries === 3, "agent/request-error must apply the override to Kimi and every other provider");
+    }
 
     // --- retryable failure -> one hidden retry, never a user message ----------
     {

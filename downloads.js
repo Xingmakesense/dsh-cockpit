@@ -1,13 +1,12 @@
 /**
  * Observe DSH Host attachment downloads without changing their bytes or save path.
  * A connection/request wrapper counts bytes as the Host sends them, while a
- * Typert Remote event source streams compact progress records to the Client.
+ * compact api-session/error relay carries progress records to the Client.
  */
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { extname } from "node:path";
 
-export const DOWNLOAD_EVENT = "cockpit/download";
+export const DOWNLOAD_PREFIX = "【下载】";
 const PROGRESS_INTERVAL_MS = 200;
 
 function header(response, name) {
@@ -62,58 +61,14 @@ function byteCount(chunk, encoding) {
     return Buffer.byteLength(String(chunk), typeof encoding === "string" ? encoding : "utf8");
 }
 
-/** A bounded, coalescing async queue consumed by the Remote event gateway. */
-export function createRemoteEventQueue(signal, publish) {
-    const frames = [];
-    let waiter;
-    let done = false;
-    const wake = () => {
-        const resolve = waiter;
-        waiter = void 0;
-        resolve?.();
-    };
-    const listener = (frame) => {
-        if (done) return;
-        const previous = frames.findIndex((item) => item.args[0].id === frame.args[0].id);
-        if (previous >= 0) frames[previous] = frame;
-        else frames.push(frame);
-        // A slow Client must not create an unbounded progress backlog.
-        if (frames.length > 120) frames.splice(0, frames.length - 120);
-        wake();
-    };
-    publish.sources.add(listener);
-    const stop = () => {
-        if (done) return;
-        done = true;
-        publish.sources.delete(listener);
-        wake();
-    };
-    if (signal.aborted) stop();
-    else signal.addEventListener("abort", stop, { once: true });
-    return (async function* iterate() {
-        try {
-            while (!done) {
-                while (frames.length > 0) yield frames.shift();
-                if (done) break;
-                await new Promise((resolve) => {
-                    waiter = resolve;
-                });
-            }
-        } finally {
-            signal.removeEventListener("abort", stop);
-            stop();
-        }
-    })();
-}
-
 /** Install Host response observation and the Client progress event source. */
 export function installDownloads(ctx) {
     const active = new Map();
     const publish = {
-        sources: new Set(),
         emit(record) {
-            const frame = { event: DOWNLOAD_EVENT, args: [{ ...record }] };
-            for (const source of this.sources) source(frame);
+            if (typeof ctx.emit === "function") {
+                ctx.emit("api-session/error", record.id, `${DOWNLOAD_PREFIX}${JSON.stringify(record)}`);
+            }
         }
     };
     let nextProgressId = 0;
@@ -199,17 +154,8 @@ export function installDownloads(ctx) {
         return next();
     }), "dsh-cockpit: download response observation");
 
-    ctx.inject(["typertGateway"], (scope) => {
-        const source = (signal) => createRemoteEventQueue(signal, publish);
-        scope.effect(
-            () => scope.typertGateway.registerRemoteEvents(source, { home: homedir() }),
-            "dsh-cockpit: download Remote events"
-        );
-    });
-
     ctx.effect(() => () => {
         for (const record of active.values()) finish(record, "aborted");
         active.clear();
-        publish.sources.clear();
     }, "dsh-cockpit: download lifecycle");
 }

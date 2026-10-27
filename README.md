@@ -38,7 +38,7 @@ DSH（DeepSeek Harness）套件插件：**自动续轮**、**会话归档管理*
 | `enabled` | `true`（随包 patch） | 是否自动续轮 |
 | `maxAttempts` | `6` | 续轮上限（1–50） |
 | `delayMs` | `1500` | 进入 idle 后、投递前的等待（毫秒） |
-| `providerRetryMaxRetries` | `3` | 单次请求的额外重试数；用于预算公式展示 |
+| `providerRetryMaxRetries` | `3` | 覆盖所有模型单次请求的内部重试上限，也用于预算公式展示 |
 | `emitProminentError` | `true` | 是否显示内联续轮提示 |
 | `retryableCodes` | `TRANSPORT`/`TIMEOUT`/`RATE_LIMIT`/`SERVER`/`EMPTY_RESPONSE`/`UNKNOWN` | 可续轮故障码 |
 | `blockedCodes` | `AUTH`/`QUOTA`/… | 不可续轮故障码 |
@@ -49,14 +49,14 @@ DSH（DeepSeek Harness）套件插件：**自动续轮**、**会话归档管理*
 （1 + providerRetryMaxRetries）×（1 + maxAttempts）
 ```
 
-`providerRetryMaxRetries` 只用于预算展示，不会改写各 provider 的实际内层重试策略；不同 provider 的默认值可能不同。`enabled` 在 Config schema 中的内置默认值是 `false`，随包 patch 显式设为 `true`，其他安装方式以实际 patch 为准。
+`providerRetryMaxRetries` 会通过 `agent/request-error` 覆盖所有模型的内部 `maxRetries`，不再只是展示值。启用插件后，各 provider 的系统默认值（例如 Kimi 的 5）都会被统一替换为配置值；`always` 模式也会转为带次数上限的 `normal` 模式。已有重试错误码和退避参数保留，只有上限被覆盖。`enabled` 在 Config schema 中的内置默认值是 `false`，随包 patch 显式设为 `true`，其他安装方式以实际 patch 为准。
 
 ## 自动续轮是怎么工作的
 
 1. 监听 `agent/error`；若通道未提供该事件，则由持久化的 `turn/end reason.kind = "error"` 兜底，同一 Turn 只计一次；
 2. agent 进入 `idle` 后，向 inbox 投递一条 `source.kind = "runtime-context"` 的消息；
 3. agent loop 消费该消息但不写入 transcript，请求由现有上下文重新组装——等价于“重发上一次请求”；
-4. 同时通过专用 `cockpit/auto-continue` Remote 事件发出提示，客户端渲染为输入框上方的细条；旧 Host 没有 Typert Gateway 时才回退到 `api-session/error`。
+4. 通过兼容的 `api-session/error` relay 发出提示，客户端渲染为输入框上方的细条；不同模型共用同一提示通道。
 
 因此对话里不会出现“继续”消息，也不会产生用户消息。
 
@@ -64,7 +64,7 @@ DSH（DeepSeek Harness）套件插件：**自动续轮**、**会话归档管理*
 
 - 标题/正文检索、项目/收藏/日期筛选、快速预览
 - 收藏、单条/批量恢复、按项目归档
-- 永久删除（二次确认，仅归档 + 非活动会话），同时清理工作区记账、置顶、收藏及当前/历史投影缓存域
+- 永久删除已归档或未归档会话（二次确认），同时清理工作区记账、置顶、收藏及当前/历史投影缓存域
 - 日志诊断与修复
 - 空对话先预览再确认删除；当前/活动会话、fork、subagent、含真实内容或未知事件的会话均不纳入候选
 
@@ -83,6 +83,7 @@ node verify-cockpit.cjs
 node verify-auto-continue.cjs
 node verify-archive.cjs
 node verify-client-ui.cjs
+node verify-downloads.cjs
 node verify-maintenance.cjs
 ```
 

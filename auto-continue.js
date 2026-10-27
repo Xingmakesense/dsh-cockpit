@@ -12,9 +12,7 @@
  * the existing conversation surface.
  */
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import z from "./vendor/schemastery.mjs";
-import { createRemoteEventQueue } from "./downloads.js";
 
 /** Defaults mirroring dsh-auto-continue 1.0.3. */
 const CONTINUE_DEFAULTS = {
@@ -150,6 +148,18 @@ export function classifyContinueFailure(error) {
     };
 }
 
+export function overrideRetryPolicyForAllModels(payload, config) {
+    const current = payload.retryPolicy;
+    return {
+        mode: "normal",
+        maxRetries: config.providerRetryMaxRetries,
+        retryableCodes: current?.retryableCodes ?? ["EMPTY_RESPONSE", "RATE_LIMIT", "SERVER", "TIMEOUT", "TRANSPORT"],
+        initialDelayMs: current?.initialDelayMs ?? 500,
+        maxDelayMs: current?.maxDelayMs ?? 10_000,
+        jitterRatio: current?.jitterRatio ?? 0.1
+    };
+}
+
 /**
  * Install the provider-independent engine on a host context.
  * @param {object} ctx host context
@@ -158,21 +168,6 @@ export function classifyContinueFailure(error) {
 export function installAutoContinue(ctx, config) {
     const readConfig = configReader(config);
     const state = new Map();
-    const noticeEvents = {
-        sources: new Set(),
-        emit(agentId, message) {
-            const frame = { event: "cockpit/auto-continue", args: [agentId, message] };
-            for (const source of this.sources) source(frame);
-        }
-    };
-    let customNoticeChannel = false;
-    ctx.inject(["typertGateway"], (scope) => {
-        customNoticeChannel = true;
-        scope.effect(
-            () => scope.typertGateway.registerRemoteEvents((signal) => createRemoteEventQueue(signal, noticeEvents), { home: homedir() }),
-            "dsh-cockpit: auto-continue Remote notices"
-        );
-    });
 
     const entryOf = (id) => {
         let entry = state.get(id);
@@ -202,8 +197,7 @@ export function installAutoContinue(ctx, config) {
     const notify = (cfg, agentId, message) => {
         if (cfg.emitProminentError) {
             try {
-                if (customNoticeChannel) noticeEvents.emit(agentId, message);
-                else if (typeof ctx.emit === "function") ctx.emit("api-session/error", agentId, message);
+                if (typeof ctx.emit === "function") ctx.emit("api-session/error", agentId, message);
             } catch {
                 /* GUI relay unavailable */
             }
@@ -385,9 +379,19 @@ export function installAutoContinue(ctx, config) {
         state.delete(payload.agent.id);
     };
 
+    const onRequestError = (payload, next) => {
+        const cfg = readConfig();
+        if (!cfg.enabled) return next();
+        // Replace, never mutate, the provider-owned policy. Every model uses
+        // the same override while retaining its existing backoff/code policy.
+        payload.retryPolicy = overrideRetryPolicyForAllModels(payload, cfg);
+        return next();
+    };
+
     const disposers = [
         ctx.on("agent/error", onAgentError),
         ctx.on("agent/status", onAgentStatus),
+        ctx.on("agent/request-error", onRequestError),
         ctx.on("session/event", onSessionEvent),
         ctx.on("agent/disposed", onDisposed)
     ];
@@ -401,7 +405,6 @@ export function installAutoContinue(ctx, config) {
         }
         for (const entry of state.values()) clearTimers(entry);
         state.clear();
-        noticeEvents.sources.clear();
     }, "dsh-cockpit: auto-continue lifecycle");
 
     const cfg = readConfig();
@@ -412,7 +415,7 @@ export function installAutoContinue(ctx, config) {
             `[dsh-cockpit] auto-continue 已上线（续轮上限 ${cfg.maxAttempts} 次·延迟 ${cfg.delayMs}ms·` +
             `可重试码 ${cfg.retryableCodes.join("/")}·提示 ${cfg.emitProminentError ? "开" : "关"}）`
         );
-        ctx.logger.info(`[dsh-cockpit] auto-continue 总请求预算（展示口径，实际内层重试由 provider 决定）：单次请求 ${perRequest} 次 × 共 ${1 + cfg.maxAttempts} 轮 = ${totalBudget} 次。`);
+        ctx.logger.info(`[dsh-cockpit] auto-continue 总请求预算（已统一覆盖各 provider 的内层重试）：单次请求 ${perRequest} 次 × 共 ${1 + cfg.maxAttempts} 轮 = ${totalBudget} 次。`);
         if (!cfg.enabled) ctx.logger.info("[dsh-cockpit] auto-continue 当前未启用（enabled: false），可在 设置 → 插件 → 自动续轮 中开启。");
     } catch {
         /* logging must never block installation */

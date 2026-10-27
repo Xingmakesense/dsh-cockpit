@@ -1118,6 +1118,7 @@ window.__ModuleLoader__.load({
 
         const NS = "dsh-cockpit";
         const NOTICE_PREFIX = "【自动续轮";
+        const DOWNLOAD_PREFIX = "【下载】";
         const NOTICE_TIMEOUT_MS = 9000;
 
         const DICTS = {
@@ -1232,6 +1233,16 @@ window.__ModuleLoader__.load({
                     publish();
                 }
             };
+        }
+
+        function parseDownloadMessage(raw) {
+            if (typeof raw !== "string" || !raw.startsWith(DOWNLOAD_PREFIX)) return null;
+            try {
+                const record = JSON.parse(raw.slice(DOWNLOAD_PREFIX.length));
+                return record && typeof record.id === "string" ? record : null;
+            } catch {
+                return null;
+            }
         }
 
         /** Active-download snapshots with short-window, byte-based speeds. */
@@ -1366,7 +1377,7 @@ window.__ModuleLoader__.load({
         }
 
         function EmptySessionCleanup({ t, workspaceRegistry, usePanelInfo }) {
-            const panel = usePanelInfo((value) => value);
+            const panel = usePanelInfo?.((value) => value) ?? {};
             const section = typeof panel === "string"
                 ? panel
                 : panel?.settingsSection ?? panel?.activeSettingsSection ?? panel?.sectionId ?? panel?.section ?? panel?.panelId ?? panel?.panel ?? panel?.id ?? panel?.key ?? panel?.activePanelId;
@@ -1774,19 +1785,17 @@ window.__ModuleLoader__.load({
 
                         if (remote && typeof remote.$on === "function") {
                             uiCtx.effect(() => {
-                                const off = remote.$on("cockpit/auto-continue", (sessionId, message) => {
+                                const offNotices = remote.$on("api-session/error", (sessionId, message) => {
                                     const notice = parseNotice(message, sessionId);
                                     if (notice) noticeStore.show(notice);
+                                    const download = parseDownloadMessage(message);
+                                    if (download) downloadStore.update(download);
                                 });
-                                return typeof off === "function" ? off : () => {};
-                            }, "dsh-cockpit: auto-continue notice relay");
-                            uiCtx.effect(() => {
-                                const off = remote.$on("cockpit/download", (record) => downloadStore.update(record));
                                 return () => {
-                                    if (typeof off === "function") off();
+                                    if (typeof offNotices === "function") offNotices();
                                     downloadStore.clear();
                                 };
-                            }, "dsh-cockpit: download progress relay");
+                            }, "dsh-cockpit: notice and download relays");
                         }
 
                         uiCtx.slots.inject("conversation.session.header.utilities", () => uiCtx.slots.register({

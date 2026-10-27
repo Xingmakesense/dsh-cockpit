@@ -82,9 +82,9 @@ function checkClientArtifact() {
         'name: "conversation.input.dock"',
         'id: "auto-continue"',
         'name: "settings.plugins.tab"',
-        '"cockpit/auto-continue"',
+        '"api-session/error"',
         'id: "cockpit-download-activity"',
-        '"cockpit/download"',
+        '【下载】',
         'id: "cockpit-empty-session-cleanup"'
     ]) {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
@@ -147,10 +147,26 @@ function checkManifest() {
     }
 }
 
+function checkDeletionSemantics() {
+    const workspace = read("./vendor/archive-manager/lib/workspace.js");
+    assert(!workspace.includes("请先归档会话，再执行永久删除"), "single-session deletion must allow archived and unarchived targets");
+    assert(workspace.includes("purgeSessionRegistryTraces"), "all deletion paths must share registry-trace cleanup");
+}
+
+function checkProjectionMigrationSource() {
+    const source = read("./vendor/archive-manager/lib/projcache.js");
+    assert(source.includes("const official = currentTable"), "official migration must have a single source");
+    assert(!source.includes("readSourceRecords(ctx, legacyProjectionCacheDomainSpec"), "legacy official data must not be read a second time");
+    assert(source.includes('importMissingRecords(ctx, target, official.records, "official", stillExists)'),
+        "the single official source must be imported exactly once");
+}
+
 async function main() {
     await checkAutoContinue();
+    checkProjectionMigrationSource();
     checkClientArtifact();
     checkHostArtifact();
+    checkDeletionSemantics();
     checkLocaleMeta();
     checkManifest();
     console.log("all cockpit checks passed");

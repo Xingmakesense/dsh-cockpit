@@ -1093,17 +1093,14 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
     return archivedSessionIds.filter((id) => !accounted.has(id));
   }
   /**
-   * 永久删除一个会话及其全部痕迹（转录目录、工作区记账、归档标记、
-   * 投影缓存行）。
+   * 永久删除一个已归档或未归档会话及其全部痕迹（转录目录、工作区记账、
+   * 归档/置顶标记、收藏与投影缓存行）。
    * @param sessionId - 要删除的会话。
    * @returns 持久化完成后的 `{ deleted: true }`。未知会话清掉残留痕迹后同样返回成功，不抛错。
    */
   async deleteSession(sessionId) {
     return this.enqueueOperation(async () => {
       try {
-        if (!this.requireState().archivedSessionIds.includes(sessionId)) {
-          throw new Error("请先归档会话，再执行永久删除；空对话清理使用独立校验入口");
-        }
         const result = await this.deleteSessionCore(sessionId);
         this.publishDeletionAudit({
           action: "delete-session",

@@ -26,10 +26,11 @@
 5. **删除审计事件**：vendored 归档 host 发出 `archive-manager/session-deleted`，`maintenance.js` 落盘；改 vendored 删除流程时保持该事件。
 6. **附件清理安全阀**：任一转录读取失败、zstd 帧不完整或会话根为空时整轮放弃；不要移除该保护。扫描必须逐帧解码并仅保留引用哈希，不得为了扫描再解析/序列化整份 JSONL。
 7. **续轮触发与去重**：`agent/error` 是快速路径，`turn/end reason.kind = "error"` 是持久化兜底；同一 Turn 只武装一次，只有 `agent.followup()` 成功才计次数。
-8. **提示与下载事件**：续轮使用 `cockpit/auto-continue`，下载使用 `cockpit/download`，不要重新借用 `api-session/error` 作为常规消息通道。
+8. **提示与下载事件**：统一复用已验证的 `api-session/error` relay；续轮以 `【自动续轮` 开头，下载以 `【下载】` 开头。Client 必须分别解析，不能让下载 JSON 被当成错误提示。
 9. **下载观测**：只能在 `connection/request` 的响应包装中统计字节，必须调用原 `next()` 并保持原响应内容、背压和保存流程；无 `Content-Length` 时不得伪造百分比。
 10. **空对话清理**：`previewEmptySessions` 只读，`deleteEmptySessions` 在确认后重新校验；当前/活动、fork、subagent、真实内容、未知事件和读取失败的会话一律保留。
-11. **缓存性能**：存活会话集合每次迁移/清扫最多读取一次 `sessionPersistence.list()`；孤儿行在各自域内批量删除，不得按候选逐个 `stat()` 或重复开关全部域。
+11. **缓存性能**：存活会话集合每次迁移/清扫最多读取一次 `sessionPersistence.list()`；兼容官方缓存记录每次迁移只读取一次；孤儿行在各自域内批量删除，不得按候选逐个 `stat()` 或重复开关全部域。
+12. **内层重试覆盖**：`providerRetryMaxRetries` 在 `agent/request-error` 中生成新的 `ResolvedNormalRetryPolicy` 并继续 `next()`，覆盖所有模型的系统默认上限；不得只修改预算公式，也不得修改其他插件的 profile 配置。
 
 ## 3. 配置与默认值
 
@@ -49,9 +50,10 @@
 | `node verify-auto-continue.cjs` | 续轮状态机（隐藏重试、Turn 去重、`turn/end` 兜底、额度分类、上限、volatile 配置、定时器释放） |
 | `node verify-archive.cjs` | 归档纯函数（缺失 `seq`、Unicode 检索、截断、日期、错误分类） |
 | `node verify-client-ui.cjs` | 用 stub loader 评估 `client.js`，校验续轮/下载事件、`conversation.input.dock`、标题栏下载卡片、归档空对话按钮与设置页 |
+| `node verify-downloads.cjs` | Host 附件响应包装、真实字节计数、文件名/后缀、完成状态与 `api-session/error` relay |
 | `node verify-maintenance.cjs` | 审计落盘、附件引用/孤儿/宽限期、多帧与损坏 zstd、空 home 安全阀 |
 
-发布前五项全绿，并执行 `node scripts/build-client.mjs --check` 与 `node --check host.js`。
+发布前六项全绿，并执行 `node scripts/build-client.mjs --check` 与 `node --check host.js`。
 
 ## 5. 发布流程
 
@@ -97,7 +99,7 @@ Config.meta.volatile === true
 |---|---|
 | 设置页“设置服务不可用” | 先看“已注册”列表是否含 `cockpit`；不含则检查 `Config` 是否原生 volatile（`Config.listConfigs` 状态应为 `schema`）；再查 `ctx.remote.settings` 取值方式 |
 | 续轮后对话出现“继续”消息 | DSH 可能改变了 `runtime-context` 过滤行为；先跑 `verify-auto-continue.cjs`，再核对 agent-loop 的 `step()` |
-| 没有内联提示 | 检查 `emitProminentError`、`【自动续轮` 前缀及 `cockpit/auto-continue` Remote 订阅是否注册 |
+| 没有内联提示 | 检查 `emitProminentError`、`【自动续轮` 前缀及 `api-session/error` 订阅是否注册 |
 | 删除失败 | 看 vendored 日志中的 `cannot delete session ...`；常见原因：持久化后端无 `locate()`、路径校验失败、文件占用 |
 | 附件没被清理 | 检查会话转录是否可读、`<DSH_HOME>/sessions` 是否存在、对象是否仍在 24 小时宽限期 |
 | 安装后页面没变化 | 安装只更新文件；client 变更需刷新页面，host 变更需完全重启 |

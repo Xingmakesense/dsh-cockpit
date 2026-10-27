@@ -131,6 +131,7 @@ function main() {
     assert(emptyCleanup.definition.id === "cockpit-empty-session-cleanup", "empty-session cleanup id changed");
     assert(typeof emptyCleanup.component === "function", "empty-session cleanup must receive a component");
     assert(typeof emptyCleanup.definition.inject().workspaceRegistry === "object", "empty-session cleanup must receive the archive remote namespace");
+    emptyCleanup.component({ t: (key) => key, workspaceRegistry: remote.workspaceRegistry, usePanelInfo: undefined });
 
     const tab = registrations.find((entry) => entry.definition.name === "settings.plugins.tab");
     assert(tab !== undefined, "auto-continue settings page must register into settings.plugins.tab");
@@ -143,15 +144,15 @@ function main() {
         "settings page must receive ctx.remote.settings (a carrier-only remote has no .settings)"
     );
 
-    const relay = subscribed.find((entry) => entry.event === "cockpit/auto-continue");
-    assert(relay !== undefined, "cockpit must subscribe to the dedicated auto-continue relay");
+    const relay = subscribed.find((entry) => entry.event === "api-session/error");
+    assert(relay !== undefined, "cockpit must subscribe to the compatible api-session/error relay");
     assert(relay.handler("s1", "unrelated error") === undefined, "unrelated errors must not throw");
 
-    const downloadRelay = subscribed.find((entry) => entry.event === "cockpit/download");
-    assert(downloadRelay !== undefined, "cockpit must subscribe to the dedicated download progress relay");
+    const downloadRelay = subscribed.find((entry) => entry.event === "api-session/error");
+    assert(downloadRelay !== undefined, "cockpit must use the same relay for download progress");
     const progress = { id: "download-1", filename: "session.zip", extension: ".zip", receivedBytes: 512, totalBytes: 1024, state: "downloading", startedAt: 1, updatedAt: 1 };
-    downloadRelay.handler(progress);
-    downloadRelay.handler({ ...progress, receivedBytes: 1024, state: "completed", updatedAt: 2 });
+    downloadRelay.handler(progress.id, `【下载】${JSON.stringify(progress)}`);
+    downloadRelay.handler(progress.id, `【下载】${JSON.stringify({ ...progress, receivedBytes: 1024, state: "completed", updatedAt: 2 })}`);
 
     console.log("all client UI checks passed");
 }

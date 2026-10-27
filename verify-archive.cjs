@@ -118,6 +118,40 @@ async function main() {
     assert(rejected, "more than 20 sessions per search must be rejected");
     assert(lib.previewInputSchema.parse({ sessionId: "s1" }).query === "", "preview query must default to empty");
 
+    // --- empty-session HTTP route ---------------------------------------------
+    const { cleanupRoute } = await import("./archive.js");
+    const cleanupCalls = [];
+    const route = cleanupRoute({
+        workspaceRegistry: {
+            async previewEmptySessions() {
+                return { items: [{ sessionId: "empty-1" }], skipped: [{ sessionId: "kept-1", reason: "active" }] };
+            },
+            async deleteEmptySessions(input) {
+                cleanupCalls.push(input);
+                return { requestedSessionIds: input.sessionIds, deletedSessionIds: input.sessionIds, skippedSessionIds: [], failures: [] };
+            }
+        }
+    });
+    assert(route.path === "/api/cockpit/empty-sessions", "cleanup route path changed");
+    const previewResponse = await route.fetch(new Request("http://localhost/api/cockpit/empty-sessions"));
+    const previewBody = await previewResponse.json();
+    assert(previewResponse.status === 200 && previewBody.ok === true && previewBody.value.items[0].sessionId === "empty-1",
+        "cleanup GET must preview candidates through the archive host");
+    const deleteResponse = await route.fetch(new Request("http://localhost/api/cockpit/empty-sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionIds: ["empty-1"] })
+    }));
+    const deleteBody = await deleteResponse.json();
+    assert(deleteBody.ok === true && cleanupCalls.length === 1 && cleanupCalls[0].sessionIds[0] === "empty-1",
+        "cleanup POST must call deleteEmptySessions with the requested ids");
+    const invalid = await route.fetch(new Request("http://localhost/api/cockpit/empty-sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionIds: [1] })
+    }));
+    assert(invalid.status === 400, "cleanup POST must reject non-string session ids");
+
     console.log("all archive-layer checks passed");
 }
 

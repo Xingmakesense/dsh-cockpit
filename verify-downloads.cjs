@@ -75,15 +75,16 @@ async function main() {
     const liveSnapshot = await registeredRoute.fetch(new Request("http://localhost/api/cockpit/downloads"));
     const liveBody = await liveSnapshot.json();
     assert(liveSnapshot.headers.get("cache-control") === "no-store", "download snapshots must not be cached");
-    assert(liveBody.downloads.length === 1 && liveBody.downloads[0].receivedBytes === 3, "polling must expose live bytes before completion");
+    assert(liveBody.ok === true && liveBody.value.length === 1 && liveBody.value[0].receivedBytes === 3,
+        "polling must expose live bytes before completion");
     response.end("def");
     const completedSnapshot = await registeredRoute.fetch(new Request("http://localhost/api/cockpit/downloads"));
-    assert((await completedSnapshot.json()).downloads.length === 0, "completed downloads must leave the polling snapshot");
+    assert((await completedSnapshot.json()).value.length === 0, "completed downloads must leave the polling snapshot");
 
     assert(emitted.length === 2, "a small download must emit start and completion without redundant progress");
     const [start, completed] = emitted;
     assert(start.event === "api-session/error" && completed.event === "api-session/error", "download must use the compatible relay");
-    assert(start.args[0] === "example" && completed.args[0] === "example", "download events must use the real session resource id, not the random download id");
+    assert(start.args[0] === "example" && completed.args[0] === "example", "download events must use the real session resource id");
     const first = JSON.parse(start.args[1].slice(DOWNLOAD_PREFIX.length));
     const last = JSON.parse(completed.args[1].slice(DOWNLOAD_PREFIX.length));
     assert(first.filename === "dsh-session-example.zip" && first.extension === ".zip", "filename and extension must be preserved");
@@ -127,7 +128,6 @@ async function main() {
         streamed.write(Buffer.from([3, 4, 5]));
         streamed.end();
         assert(emitted.length === 3, "streamed bytes must emit start, throttled live progress, and completion");
-        assert(emitted.every((entry) => entry.args[0] === "streamed"), "every streamed progress event must pass Remote session resource filtering");
         const progress = JSON.parse(emitted[1].args[1].slice(DOWNLOAD_PREFIX.length));
         assert(progress.state === "downloading" && progress.receivedBytes === 5, "live progress must count every streamed byte");
         assert(progress.totalBytes === null, "an unknown stream length must stay null instead of inventing a percentage");

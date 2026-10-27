@@ -204,7 +204,7 @@ window.__ModuleLoader__.load({
                     }
                     publish();
                 },
-                /** Replace the whole active set from the Host's polling endpoint. */
+                /** Replace the active set with one authoritative Host snapshot. */
                 replace(records) {
                     const activeIds = new Set();
                     for (const record of Array.isArray(records) ? records : []) {
@@ -311,14 +311,45 @@ window.__ModuleLoader__.load({
             );
         }
 
-        function EmptySessionCleanup({ t, workspaceRegistry }) {
+        const CLEANUP_ROUTE = "api/cockpit/empty-sessions";
+        const DOWNLOAD_ROUTE = "api/cockpit/downloads";
+
+        function EmptySessionCleanup({ t, getWorkspaceRegistry }) {
             const [state, setState] = React.useState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
 
-            const call = async (method, input) => {
-                if (!workspaceRegistry || typeof workspaceRegistry[method] !== "function") throw new Error("workspaceRegistry unavailable");
-                const response = input === void 0 ? await workspaceRegistry[method]() : await workspaceRegistry[method](input);
+            const unavailable = () => Object.assign(new Error("cleanup route unavailable"), { routeUnavailable: true });
+            const callRemote = async (method, input) => {
+                let registry;
+                try {
+                    registry = getWorkspaceRegistry?.();
+                } catch {
+                    registry = undefined;
+                }
+                if (!registry || typeof registry[method] !== "function") throw unavailable();
+                const response = input === void 0 ? await registry[method]() : await registry[method](input);
                 if (response && response.ok === false) throw new Error(response.error?.message ?? `${method} failed`);
                 return response && response.ok === true ? response.value : response;
+            };
+            const call = async (method, input) => {
+                try {
+                    const response = await fetch(CLEANUP_ROUTE, {
+                        method: input === void 0 ? "GET" : "POST",
+                        cache: "no-store",
+                        headers: input === void 0
+                            ? { accept: "application/json" }
+                            : { accept: "application/json", "content-type": "application/json" },
+                        ...input === void 0 ? {} : { body: JSON.stringify(input) }
+                    });
+                    if (response.status === 404 || response.status === 405) throw unavailable();
+                    const payload = await response.json().catch(() => null);
+                    if (!response.ok || !payload || payload.ok === false) {
+                        throw new Error(payload?.error?.message ?? `cleanup request failed: HTTP ${response.status}`);
+                    }
+                    return payload.value;
+                } catch (error) {
+                    if (error?.routeUnavailable) return callRemote(method, input);
+                    throw error;
+                }
             };
             const preview = async () => {
                 setState({ phase: "loading", candidates: [], skipped: 0, error: "", result: null });
@@ -345,7 +376,7 @@ window.__ModuleLoader__.load({
                     type: "button",
                     disabled: busy,
                     onClick: preview,
-                    style: { ...buttonStyle, padding: "6px 14px", fontSize: 12, opacity: busy ? 0.55 : 1 },
+                    style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 },
                     title: t("emptyCleanup")
                 }, busy ? "…" : t("emptyCleanup")),
                 state.phase !== "idle" ? h("span", {
@@ -534,7 +565,7 @@ window.__ModuleLoader__.load({
             };
         }
 
-        function SettingsPage({ t, settings, workspaceRegistry }) {
+        function SettingsPage({ t, settings, getWorkspaceRegistry }) {
             const [state, setState] = React.useState({ phase: "loading", view: null, draft: null, error: null, available: [] });
             const [saveState, setSaveState] = React.useState("idle");
 
@@ -637,7 +668,7 @@ window.__ModuleLoader__.load({
                     h("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 4 } }, t("emptyCleanupTitle")),
                     h("div", { style: { fontSize: 12, lineHeight: 1.5, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, t("emptyCleanupDescription"))
                 ),
-                h(EmptySessionCleanup, { t, workspaceRegistry })
+                h(EmptySessionCleanup, { t, getWorkspaceRegistry })
                 ),
                 state.phase === "loading" ? h("div", { style: { fontSize: 13 } }, t("loading")) : null,
                 state.phase === "unavailable"
@@ -731,6 +762,13 @@ window.__ModuleLoader__.load({
                         // return the carrier service (no `.settings`).
                         const remote = uiCtx.remote;
                         const settings = remote?.settings;
+                        const getWorkspaceRegistry = () => {
+                            try {
+                                return uiCtx.remote?.workspaceRegistry;
+                            } catch {
+                                return undefined;
+                            }
+                        };
 
                         if (remote && typeof remote.$on === "function") {
                             uiCtx.effect(() => {
@@ -745,41 +783,6 @@ window.__ModuleLoader__.load({
                                 };
                             }, "dsh-cockpit: notice and download relays");
                         }
-
-                        // Host progress is authoritative. Polling this small
-                        // same-origin endpoint works even when the Remote event
-                        // relay filters a record whose resource id is unrelated
-                        // to the active Session.
-                        uiCtx.effect(() => {
-                            if (typeof document === "undefined" || typeof fetch !== "function") return;
-                            let stopped = false;
-                            let timer;
-                            const poll = async () => {
-                                let delay = 1200;
-                                try {
-                                    const response = await fetch("api/cockpit/downloads", {
-                                        method: "GET",
-                                        cache: "no-store",
-                                        headers: { accept: "application/json" }
-                                    });
-                                    if (response.ok) {
-                                        const body = await response.json();
-                                        const downloads = Array.isArray(body?.downloads) ? body.downloads : [];
-                                        downloadStore.replace(downloads);
-                                        delay = downloads.length > 0 ? 300 : 1200;
-                                    }
-                                } catch {
-                                    /* an unavailable route leaves the event path intact */
-                                }
-                                if (!stopped) timer = setTimeout(poll, delay);
-                            };
-                            poll();
-                            return () => {
-                                stopped = true;
-                                clearTimeout(timer);
-                                downloadStore.clear();
-                            };
-                        }, "dsh-cockpit: download progress polling");
 
                         uiCtx.slots.inject("conversation.session.header.utilities", () => uiCtx.slots.register({
                             name: "conversation.session.header.utilities",
@@ -802,8 +805,43 @@ window.__ModuleLoader__.load({
                             order: 100,
                             label: () => t("tab"),
                             locale: NS,
-                            inject: () => ({ t, settings, workspaceRegistry: remote?.workspaceRegistry })
+                            inject: () => ({ t, settings, getWorkspaceRegistry })
                         }, SettingsPage));
+
+                        try {
+                            uiCtx.effect(() => {
+                                if (typeof document === "undefined" || typeof fetch !== "function") return;
+                                let stopped = false;
+                                let timer;
+                                const poll = async () => {
+                                    let delay = 1500;
+                                    try {
+                                        const response = await fetch(DOWNLOAD_ROUTE, {
+                                            method: "GET",
+                                            cache: "no-store",
+                                            headers: { accept: "application/json" }
+                                        });
+                                        if (response.ok) {
+                                            const payload = await response.json();
+                                            const downloads = Array.isArray(payload?.value) ? payload.value : [];
+                                            downloadStore.replace(downloads);
+                                            delay = downloads.length > 0 ? 500 : 1500;
+                                        }
+                                    } catch {
+                                        /* the event relay remains as the fallback */
+                                    }
+                                    if (!stopped) timer = setTimeout(poll, delay);
+                                };
+                                poll();
+                                return () => {
+                                    stopped = true;
+                                    clearTimeout(timer);
+                                    downloadStore.clear();
+                                };
+                            }, "dsh-cockpit: download progress polling");
+                        } catch (error) {
+                            console.warn("[dsh-cockpit] download polling skipped:", error);
+                        }
                     }
                 };
                 ctx.plugin(cockpitUi);

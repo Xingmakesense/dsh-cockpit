@@ -30,6 +30,19 @@ function textOf(node) {
     return textOf(node.props?.children);
 }
 
+function findNode(node, predicate) {
+    if (!node || typeof node !== "object") return undefined;
+    if (Array.isArray(node)) {
+        for (const child of node) {
+            const found = findNode(child, predicate);
+            if (found !== undefined) return found;
+        }
+        return undefined;
+    }
+    if (predicate(node)) return node;
+    return findNode(node.props?.children, predicate);
+}
+
 function loadModules() {
     const modules = [];
     globalThis.window = { __ModuleLoader__: { load(mod) { modules.push(mod); } } };
@@ -38,7 +51,7 @@ function loadModules() {
     return modules;
 }
 
-function main() {
+async function main() {
     const modules = loadModules();
     assert(modules.length === 2, `expected 2 client modules, got ${modules.length}`);
     assert(modules[0].id === "@michengai/dsh-archive-manager", "archive module id changed");
@@ -154,7 +167,7 @@ function main() {
     downloadStore.replace([]);
     assert(downloadCard.component({ store: downloadStore }) === null, "completed downloads must leave the active card");
 
-    assert(!registrations.some((entry) => entry.definition.name === "settings.action"), "empty-session cleanup must not depend on the unreliable global settings header");
+    assert(!registrations.some((entry) => entry.definition.name === "settings.action"), "empty-session cleanup must not depend on the global settings header");
 
     const tab = registrations.find((entry) => entry.definition.name === "settings.plugins.tab");
     assert(tab !== undefined, "auto-continue settings page must register into settings.plugins.tab");
@@ -166,10 +179,30 @@ function main() {
         tabProps.settings !== undefined && typeof tabProps.settings.describe === "function",
         "settings page must receive ctx.remote.settings (a carrier-only remote has no .settings)"
     );
-    assert(tabProps.workspaceRegistry === remote.workspaceRegistry, "settings page must receive the empty-session cleanup remote");
-    const settingsText = textOf(tab.component({ t: (key) => key, ...tabProps }));
+    assert(typeof tabProps.getWorkspaceRegistry === "function", "settings page cleanup must resolve its remote lazily, never during registration");
+    const settingsTree = tab.component({ ...tabProps, t: (key) => key });
+    const settingsText = textOf(settingsTree);
     assert(settingsText.includes("emptyCleanupTitle"), "the auto-continue page must render the visible empty-session cleanup section");
     assert(settingsText.includes("emptyCleanup"), "the auto-continue page must render the empty-session cleanup button");
+
+    const cleanupNode = findNode(settingsTree, (node) => typeof node.type === "function" && node.type.name === "EmptySessionCleanup");
+    assert(cleanupNode !== undefined, "cleanup component must be embedded in the auto-continue page");
+    const cleanupView = cleanupNode.type(cleanupNode.props);
+    const cleanupButton = findNode(cleanupView, (node) => node.type === "button" && node.props?.title === "emptyCleanup");
+    assert(cleanupButton !== undefined, "cleanup button must be rendered");
+    const realFetch = globalThis.fetch;
+    let cleanupRequest;
+    globalThis.fetch = async (url, init) => {
+        cleanupRequest = { url, init };
+        return { ok: true, status: 200, json: async () => ({ ok: true, value: { items: [], skipped: [] } }) };
+    };
+    try {
+        await cleanupButton.props.onClick();
+        assert(cleanupRequest?.url === "api/cockpit/empty-sessions" && cleanupRequest.init.method === "GET",
+            "cleanup preview must use the same-origin GET route");
+    } finally {
+        globalThis.fetch = realFetch;
+    }
 
     const relay = subscribed.find((entry) => entry.event === "api-session/error");
     assert(relay !== undefined, "cockpit must subscribe to the compatible api-session/error relay");
@@ -184,9 +217,7 @@ function main() {
     console.log("all client UI checks passed");
 }
 
-try {
-    main();
-} catch (error) {
+main().catch((error) => {
     console.error(error);
     process.exit(1);
-}
+});

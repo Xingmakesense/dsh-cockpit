@@ -72,28 +72,34 @@ function requestSessionId(requestUrl) {
     }
 }
 
+function jsonResponse(status, body) {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store"
+        }
+    });
+}
+
 /** Install Host response observation and the Client progress event source. */
 export function installDownloads(ctx) {
     const active = new Map();
-    const snapshot = () => [...active.values()].map((record) => ({ ...record }));
     const route = {
         path: DOWNLOAD_ROUTE,
         methods: ["GET"],
         requestBody: "buffered",
-        fetch: async () => new Response(JSON.stringify({ downloads: snapshot() }), {
-            status: 200,
-            headers: {
-                "content-type": "application/json; charset=utf-8",
-                "cache-control": "no-store"
-            }
+        fetch: async () => jsonResponse(200, {
+            ok: true,
+            value: [...active.values()].map((record) => ({ ...record }))
         })
     };
     const publish = {
         emit(record) {
             if (typeof ctx.emit === "function") {
-                // api-session/error is resource-scoped: an invented download id
-                // is filtered before it reaches the Client. Session-log routes
-                // carry the real session id, which makes the relay deliverable.
+                // api-session/error is resource-scoped. Session-log routes carry
+                // the real session id; an invented id would be filtered before
+                // it reaches the Client.
                 ctx.emit("api-session/error", record.sessionId ?? record.id, `${DOWNLOAD_PREFIX}${JSON.stringify(record)}`);
             }
         }
@@ -102,8 +108,9 @@ export function installDownloads(ctx) {
 
     try {
         const connection = typeof ctx.get === "function" ? ctx.get("connection") : ctx.connection;
-        if (connection?.fetch?.register) {
-            ctx.effect(() => connection.fetch.register(route), "dsh-cockpit: download progress route");
+        if (typeof connection?.fetch?.register === "function") {
+            const registered = connection.fetch.register(route);
+            if (typeof registered === "function") ctx.effect(() => registered, "dsh-cockpit: download progress route");
         } else if (typeof ctx.inject === "function") {
             ctx.inject(["connection"], (scope) => {
                 scope.effect(() => scope.connection.fetch.register(route), "dsh-cockpit: download progress route");

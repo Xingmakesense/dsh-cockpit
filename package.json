@@ -1,6 +1,6 @@
 {
   "name": "dsh-cockpit",
-  "version": "2.7.3",
+  "version": "2.8.0",
   "description": "DSH 驾驶舱套件：模块化的自动续轮（全模型失败兜底 + 中文内联提示 + 设置页）、会话归档与空对话清理、下载进度、删除审计和孤儿附件清理（推理强度滑条由独立的 dsh-effort-slider 提供）。 · Suite with provider-independent auto-continue, session-archive and empty-session management, download progress, deletion audit and orphan-attachment cleanup; the reasoning slider lives in the standalone dsh-effort-slider package.",
   "type": "module",
   "main": "host.js",

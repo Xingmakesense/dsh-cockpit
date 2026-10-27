@@ -85,13 +85,14 @@ function jsonResponse(status, body) {
 /** Install Host response observation and the Client progress event source. */
 export function installDownloads(ctx) {
     const active = new Map();
+    const recent = new Map();
     const route = {
         path: DOWNLOAD_ROUTE,
         methods: ["GET"],
         requestBody: "buffered",
         fetch: async () => jsonResponse(200, {
             ok: true,
-            value: [...active.values()].map((record) => ({ ...record }))
+            value: [...active.values(), ...recent.values()].map((record) => ({ ...record }))
         })
     };
     const publish = {
@@ -130,6 +131,11 @@ export function installDownloads(ctx) {
         record.updatedAt = Date.now();
         publish.emit(record);
         active.delete(record.id);
+        if (state === "completed") {
+            recent.set(record.id, { ...record, completedAt: record.updatedAt });
+            const timer = setTimeout(() => recent.delete(record.id), 5000);
+            timer.unref?.();
+        }
     };
 
     const track = (request, response) => {
@@ -209,5 +215,6 @@ export function installDownloads(ctx) {
     ctx.effect(() => () => {
         for (const record of active.values()) finish(record, "aborted");
         active.clear();
+        recent.clear();
     }, "dsh-cockpit: download lifecycle");
 }

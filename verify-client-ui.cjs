@@ -165,7 +165,12 @@ async function main() {
     const downloadText = textOf(downloadCard.component({ store: downloadStore }));
     assert(downloadText.includes("3.0 KB · 1.5 KB/s"), `download card must show live bytes and speed, got: ${downloadText}`);
     downloadStore.replace([]);
-    assert(downloadCard.component({ store: downloadStore }) === null, "completed downloads must leave the active card");
+    assert(downloadCard.component({ store: downloadStore }) !== null, "one empty poll must not erase an active download");
+    downloadStore.replace([]);
+    const completedText = textOf(downloadCard.component({ store: downloadStore }));
+    assert(completedText.includes("已完成"), `completed downloads must stay visible briefly, got: ${completedText}`);
+    downloadStore.clear();
+    assert(downloadCard.component({ store: downloadStore }) === null, "cleared downloads must leave the active card");
 
     assert(!registrations.some((entry) => entry.definition.name === "settings.action"), "empty-session cleanup must not depend on the global settings header");
 

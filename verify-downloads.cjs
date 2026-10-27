@@ -79,7 +79,9 @@ async function main() {
         "polling must expose live bytes before completion");
     response.end("def");
     const completedSnapshot = await registeredRoute.fetch(new Request("http://localhost/api/cockpit/downloads"));
-    assert((await completedSnapshot.json()).value.length === 0, "completed downloads must leave the polling snapshot");
+    const completedBody = await completedSnapshot.json();
+    assert(completedBody.value.length === 1 && completedBody.value[0].state === "completed" && completedBody.value[0].receivedBytes === 6,
+        "completed downloads must remain discoverable in the recent snapshot");
 
     assert(emitted.length === 2, "a small download must emit start and completion without redundant progress");
     const [start, completed] = emitted;

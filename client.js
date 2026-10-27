@@ -1305,16 +1305,21 @@ window.__ModuleLoader__.load({
             };
         }
 
-        function formatDownloadSpeed(value) {
-            if (!Number.isFinite(value) || value < 0) return "计算中…";
-            const units = ["B/s", "KB/s", "MB/s", "GB/s"];
-            let size = value;
+        function formatDownloadBytes(value) {
+            const bytes = Number.isFinite(value) && value >= 0 ? value : 0;
+            const units = ["B", "KB", "MB", "GB"];
+            let size = bytes;
             let index = 0;
             while (size >= 1024 && index < units.length - 1) {
                 size /= 1024;
                 index += 1;
             }
             return `${size >= 10 || index === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[index]}`;
+        }
+
+        function formatDownloadSpeed(value) {
+            if (!Number.isFinite(value) || value < 0) return "计算中…";
+            return `${formatDownloadBytes(value)}/s`;
         }
 
         function DownloadActivityCard({ store }) {
@@ -1331,14 +1336,14 @@ window.__ModuleLoader__.load({
             return h("div", {
                 role: "status",
                 "aria-live": "polite",
-                "aria-label": `${item.filename}，${formatDownloadSpeed(item.speed)}`,
+                "aria-label": `${item.filename}，已下载 ${formatDownloadBytes(item.receivedBytes)}，${formatDownloadSpeed(item.speed)}`,
                 style: {
                     boxSizing: "border-box",
                     display: "flex",
                     alignItems: "center",
                     gap: 7,
-                    width: "min(340px, 42vw)",
-                    minWidth: 220,
+                    width: "min(360px, 44vw)",
+                    minWidth: 240,
                     height: 34,
                     padding: "0 8px",
                     borderRadius: 8,
@@ -1356,8 +1361,11 @@ window.__ModuleLoader__.load({
                 style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: token("--dsw-alias-label-primary", "#f4f4f5") }
             }, stem),
             h("span", { style: { flex: "none", fontSize: 10, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, extension),
-            h("span", { style: { flex: "none", width: 96, display: "flex", flexDirection: "column", alignItems: "stretch" } },
-                h("span", { style: { height: 12, fontSize: 10, lineHeight: "12px", textAlign: "right", fontVariantNumeric: "tabular-nums" } }, formatDownloadSpeed(item.speed)),
+            h("span", {
+                title: Number.isFinite(item.totalBytes) ? `${item.receivedBytes} / ${item.totalBytes} bytes` : `${item.receivedBytes} bytes`,
+                style: { flex: "none", width: 142, display: "flex", flexDirection: "column", alignItems: "stretch" }
+            },
+                h("span", { style: { height: 12, fontSize: 10, lineHeight: "12px", textAlign: "right", fontVariantNumeric: "tabular-nums" } }, `${formatDownloadBytes(item.receivedBytes)} · ${formatDownloadSpeed(item.speed)}`),
                 h("span", { style: { display: "block", height: 4, marginTop: 2, borderRadius: 999, overflow: "hidden", background: token("--dsw-alias-bg-sunken", "#121215") } },
                     h("span", {
                         className: percent === null ? "cockpit-download-indeterminate" : "",
@@ -1376,13 +1384,8 @@ window.__ModuleLoader__.load({
             );
         }
 
-        function EmptySessionCleanup({ t, workspaceRegistry, usePanelInfo }) {
-            const panel = usePanelInfo?.((value) => value) ?? {};
-            const section = typeof panel === "string"
-                ? panel
-                : panel?.settingsSection ?? panel?.activeSettingsSection ?? panel?.sectionId ?? panel?.section ?? panel?.panelId ?? panel?.panel ?? panel?.id ?? panel?.key ?? panel?.activePanelId;
+        function EmptySessionCleanup({ t, workspaceRegistry }) {
             const [state, setState] = React.useState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
-            if (section && section !== "archived-sessions") return null;
 
             const call = async (method, input) => {
                 if (!workspaceRegistry || typeof workspaceRegistry[method] !== "function") throw new Error("workspaceRegistry unavailable");

@@ -71,6 +71,48 @@ async function main() {
     assert(last.receivedBytes === 6 && last.totalBytes === 6 && last.state === "completed", "completion must count exact bytes");
     assert(first.id === last.id, "one response must keep one download id");
 
+    // A streamed ZIP has no Content-Length. Intermediate response.write calls
+    // must still publish real byte deltas instead of only start/completion.
+    emitted.length = 0;
+    const realNow = Date.now;
+    let now = 5000;
+    Date.now = () => now;
+    try {
+        const streamHeaders = { "content-disposition": 'attachment; filename="streamed.zip"' };
+        const streamListeners = new Map();
+        const streamed = {
+            getHeader(name) {
+                return streamHeaders[name.toLowerCase()];
+            },
+            writeHead() {
+                return this;
+            },
+            write() {
+                return true;
+            },
+            end() {
+                streamListeners.get("finish")?.();
+                streamListeners.get("close")?.();
+            },
+            once(event, listener) {
+                streamListeners.set(event, listener);
+                return this;
+            }
+        };
+        await onRequest({ method: "GET", url: "/api/session.export?sessionId=streamed" }, streamed, async () => {});
+        streamed.writeHead(200);
+        streamed.write(Buffer.from([1, 2]));
+        now += 250;
+        streamed.write(Buffer.from([3, 4, 5]));
+        streamed.end();
+        assert(emitted.length === 3, "streamed bytes must emit start, throttled live progress, and completion");
+        const progress = JSON.parse(emitted[1].args[1].slice(DOWNLOAD_PREFIX.length));
+        assert(progress.state === "downloading" && progress.receivedBytes === 5, "live progress must count every streamed byte");
+        assert(progress.totalBytes === null, "an unknown stream length must stay null instead of inventing a percentage");
+    } finally {
+        Date.now = realNow;
+    }
+
     const named = downloadName({
         getHeader(name) {
             return name.toLowerCase() === "content-disposition" ? "attachment; filename*=UTF-8''hello%20world.jsonl" : undefined;

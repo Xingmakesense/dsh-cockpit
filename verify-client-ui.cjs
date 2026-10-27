@@ -11,12 +11,22 @@ const vm = require("node:vm");
 
 function fakeReact() {
     return {
-        createElement: () => null,
+        createElement: (type, props, ...children) => ({
+            type,
+            props: { ...(props || {}), children: children.length <= 1 ? children[0] : children }
+        }),
         useState: (initial) => [initial, () => {}],
         useEffect: () => {},
         useCallback: (fn) => fn,
-        useSyncExternalStore: () => null
+        useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot()
     };
+}
+
+function textOf(node) {
+    if (node === null || node === void 0 || typeof node === "boolean") return "";
+    if (Array.isArray(node)) return node.map(textOf).join("");
+    if (typeof node === "string" || typeof node === "number") return String(node);
+    return textOf(node.props?.children);
 }
 
 function loadModules() {
@@ -125,13 +135,35 @@ function main() {
     assert(downloadCard.definition.id === "cockpit-download-activity", "download card id changed");
     assert(downloadCard.definition.order === -6, "download card must stay left of the schedule catalog");
     assert(typeof downloadCard.component === "function", "download card must receive a component");
+    const downloadStore = downloadCard.definition.inject().store;
+    const liveProgress = {
+        id: "download-live",
+        filename: "live.zip",
+        extension: ".zip",
+        receivedBytes: 1536,
+        totalBytes: null,
+        state: "downloading",
+        startedAt: 1000,
+        updatedAt: 1000
+    };
+    downloadStore.update(liveProgress);
+    downloadStore.update({ ...liveProgress, receivedBytes: 3072, updatedAt: 2000 });
+    const downloadText = textOf(downloadCard.component({ store: downloadStore }));
+    assert(downloadText.includes("3.0 KB · 1.5 KB/s"), `download card must show live bytes and speed, got: ${downloadText}`);
+    downloadStore.update({ ...liveProgress, receivedBytes: 3072, state: "completed", updatedAt: 2100 });
+    assert(downloadCard.component({ store: downloadStore }) === null, "completed downloads must leave the active card");
 
     const emptyCleanup = registrations.find((entry) => entry.definition.name === "settings.action");
     assert(emptyCleanup !== undefined, "empty-session cleanup must register into settings.action");
     assert(emptyCleanup.definition.id === "cockpit-empty-session-cleanup", "empty-session cleanup id changed");
     assert(typeof emptyCleanup.component === "function", "empty-session cleanup must receive a component");
     assert(typeof emptyCleanup.definition.inject().workspaceRegistry === "object", "empty-session cleanup must receive the archive remote namespace");
-    emptyCleanup.component({ t: (key) => key, workspaceRegistry: remote.workspaceRegistry, usePanelInfo: undefined });
+    const cleanupView = emptyCleanup.component({
+        t: (key) => key,
+        workspaceRegistry: remote.workspaceRegistry,
+        usePanelInfo: (selector) => selector({ id: "settings", activePanelId: "settings" })
+    });
+    assert(cleanupView !== null && textOf(cleanupView).includes("emptyCleanup"), "generic settings panel ids must not hide the archive cleanup button");
 
     const tab = registrations.find((entry) => entry.definition.name === "settings.plugins.tab");
     assert(tab !== undefined, "auto-continue settings page must register into settings.plugins.tab");

@@ -39,7 +39,10 @@ async function main() {
     if (supportsZstd) {
         const session2 = join(home, "sessions", "--F-AI-file--", "session-2");
         await mkdir(session2, { recursive: true });
-        await writeFile(join(session2, "session.v4.jsonl.zstd"), zlib.zstdCompressSync(Buffer.from(`{"text":"file ${HASH_C} used"}\n`)));
+        await writeFile(join(session2, "session.v4.jsonl.zstd"), Buffer.concat([
+            zlib.zstdCompressSync(Buffer.from(`{"text":"file ${HASH_C} used"}\n`)),
+            zlib.zstdCompressSync(Buffer.from(`{"text":"a second complete frame"}\n`))
+        ]));
     }
 
     const HOUR = 3_600_000;
@@ -64,6 +67,24 @@ async function main() {
     await writeFile(join(emptyHome, "attachments", "v1", "objects", "ee", "e".repeat(64)), "x");
     const emptyStats = await maintenance.cleanupOrphanAttachments({ home: emptyHome, minAgeMs: 0 });
     assert(emptyStats.complete === false && emptyStats.deleted === 0, "an empty sessions root must never purge attachments");
+
+    if (supportsZstd) {
+        // Safety: a valid first frame followed by a torn frame is NOT a complete
+        // reference scan. Even a decoded hash must not authorize deletion.
+        const corruptHome = join(ROOT, "corrupt-home");
+        const corruptSession = join(corruptHome, "sessions", "--F-AI-file--", "session-corrupt");
+        await mkdir(corruptSession, { recursive: true });
+        await writeFile(join(corruptSession, "session.v4.jsonl.zstd"), Buffer.concat([
+            zlib.zstdCompressSync(Buffer.from(`{"text":"file ${HASH_A} used"}\n`)),
+            Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 1, 2, 3])
+        ]));
+        await putObject(corruptHome, HASH_A, 48 * HOUR);
+        await putObject(corruptHome, HASH_B, 48 * HOUR);
+        const corruptStats = await maintenance.cleanupOrphanAttachments({ home: corruptHome, minAgeMs: 0 });
+        assert(corruptStats.complete === false && corruptStats.deleted === 0, "a torn zstd frame must abort the entire sweep");
+        assert(await exists(join(corruptHome, "attachments", "v1", "objects", HASH_A.slice(0, 2), HASH_A)), "partially decoded attachment must stay");
+        assert(await exists(join(corruptHome, "attachments", "v1", "objects", HASH_B.slice(0, 2), HASH_B)), "an unreadable scan must not classify an orphan");
+    }
 
     // Audit records: direct append and the event-driven path.
     await maintenance.appendAudit(home, { at: "2026-10-18T00:00:00.000Z", action: "test", deletedSessionIds: ["session-1"] });

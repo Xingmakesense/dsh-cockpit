@@ -43,6 +43,12 @@ async function main() {
     assert(conversation[0].role === "user" && conversation[0].text === "你好", "user text lost");
     assert(conversation[1].text === "第一段\n第二段", "text blocks must be joined with newlines");
     assert(conversation[1].seq === 2, "sequence must be preserved");
+    const legacyConversation = lib.extractConversation([
+        { type: "user/message", data: { message: { content: "missing seq" } } },
+        { type: "assistant/message", seq: 8, data: { message: { content: "present seq" } } }
+    ]);
+    assert(legacyConversation.length === 2 && legacyConversation[0].seq === 0 && legacyConversation[1].seq === 8,
+        "missing legacy seq must fall back to the event index without dropping the session");
 
     // --- findTextRange ----------------------------------------------------------
     assert(JSON.stringify(lib.findTextRange("Hello World", "world")) === JSON.stringify({ start: 6, end: 11 }),
@@ -51,6 +57,8 @@ async function main() {
         "CJK prefix must not shift the match offset");
     assert(lib.findTextRange("abc", "  ") === null, "blank query must not match");
     assert(lib.findTextRange("abc", "zzz") === null, "missing query must return null");
+    assert(JSON.stringify(lib.findTextRange("xİy", "i\u0307y")) === JSON.stringify({ start: 1, end: 3 }),
+        "Unicode lowercase expansion must map back to the original character range");
 
     // --- findContentMatch -------------------------------------------------------
     const snippet = lib.findContentMatch(
@@ -78,6 +86,9 @@ async function main() {
     const lastCode = truncated.messages[0].text.charCodeAt(truncated.messages[0].text.length - 1);
     assert(truncated.messages[0].truncated === true, "long preview text must be flagged as truncated");
     assert(!(lastCode >= 0xd800 && lastCode <= 0xdbff), "preview must not cut a surrogate pair in half");
+    const middle = lib.previewConversation([{ seq: 1, role: "user", text: "x".repeat(2000) + "needle" }], "needle");
+    assert(middle.messages[0].truncated === true && middle.messages[0].text.length < 2000 && middle.messages[0].text.endsWith("needle"),
+        "a match after the 2000-character boundary must retain its truncated marker");
 
     // --- date range helpers -----------------------------------------------------
     assert(lib.validUpdatedRange("2026-10-02", "2026-10-01") === false, "reversed range must be invalid");

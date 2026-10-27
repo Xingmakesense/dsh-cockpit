@@ -48,6 +48,16 @@ window.__ModuleLoader__.load({
                 noticeBlocked: "自动续轮未启动",
                 close: "关闭",
                 failureCode: "故障码",
+                attempt: "第 {attempt}/{max} 次",
+                registered: "已注册：",
+                requestUnit: "次",
+                emptyCleanup: "清除空对话",
+                emptyNone: "没有可清理的空对话",
+                emptyConfirm: "发现 {count} 个空对话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
+                emptyDeleteConfirm: "确认删除",
+                emptyDeleteResult: "已删除 {deleted}，跳过 {skipped}，失败 {failed}",
+                emptyFailed: "操作失败：",
+                cancel: "取消",
             },
             en: {
                 tab: "Auto-continue",
@@ -73,6 +83,16 @@ window.__ModuleLoader__.load({
                 noticeBlocked: "Auto-continue not started",
                 close: "Close",
                 failureCode: "Failure code",
+                attempt: "Attempt {attempt}/{max}",
+                registered: "Registered: ",
+                requestUnit: "requests",
+                emptyCleanup: "Clear empty chats",
+                emptyNone: "No empty chats to clear",
+                emptyConfirm: "{count} empty chats will be permanently deleted ({skipped} skipped). This cannot be undone.",
+                emptyDeleteConfirm: "Delete permanently",
+                emptyDeleteResult: "Deleted {deleted}, skipped {skipped}, failed {failed}",
+                emptyFailed: "Operation failed: ",
+                cancel: "Cancel",
             }
         };
 
@@ -117,6 +137,215 @@ window.__ModuleLoader__.load({
             };
         }
 
+        /** Active-download snapshots with short-window, byte-based speeds. */
+        function createDownloadStore() {
+            const items = new Map();
+            const samples = new Map();
+            const listeners = new Set();
+            let snapshot = Object.freeze([]);
+
+            const speedOf = (id) => {
+                const rows = samples.get(id) ?? [];
+                if (rows.length < 2) return null;
+                const first = rows[0];
+                const last = rows[rows.length - 1];
+                const elapsed = last.time - first.time;
+                if (elapsed <= 0) return null;
+                return Math.max(0, (last.bytes - first.bytes) * 1000 / elapsed);
+            };
+            const publish = () => {
+                snapshot = Object.freeze([...items.values()]
+                    .sort((left, right) => left.startedAt - right.startedAt)
+                    .map((item) => Object.freeze({ ...item, speed: speedOf(item.id) })));
+                for (const listener of listeners) {
+                    try {
+                        listener();
+                    } catch {
+                        /* one bad view must not break download observation */
+                    }
+                }
+            };
+            return {
+                get: () => snapshot,
+                subscribe(listener) {
+                    listeners.add(listener);
+                    return () => listeners.delete(listener);
+                },
+                update(record) {
+                    if (!record || typeof record.id !== "string") return;
+                    if (record.state !== "downloading") {
+                        items.delete(record.id);
+                        samples.delete(record.id);
+                    } else {
+                        const previous = items.get(record.id);
+                        items.set(record.id, { ...previous, ...record });
+                        if (!previous || previous.receivedBytes !== record.receivedBytes) {
+                            const time = Number(record.updatedAt) || Date.now();
+                            const rows = [...(samples.get(record.id) ?? []), { time, bytes: record.receivedBytes }]
+                                .filter((row) => time - row.time <= 2500)
+                                .slice(-12);
+                            samples.set(record.id, rows);
+                        }
+                    }
+                    publish();
+                },
+                clear() {
+                    items.clear();
+                    samples.clear();
+                    publish();
+                }
+            };
+        }
+
+        function formatDownloadSpeed(value) {
+            if (!Number.isFinite(value) || value < 0) return "计算中…";
+            const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+            let size = value;
+            let index = 0;
+            while (size >= 1024 && index < units.length - 1) {
+                size /= 1024;
+                index += 1;
+            }
+            return `${size >= 10 || index === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[index]}`;
+        }
+
+        function DownloadActivityCard({ store }) {
+            const active = React.useSyncExternalStore(store.subscribe, store.get, store.get);
+            if (active.length === 0) return null;
+            const item = active[0];
+            const extension = item.extension || "文件";
+            const stem = item.extension && item.filename.endsWith(item.extension)
+                ? item.filename.slice(0, -item.extension.length)
+                : item.filename;
+            const percent = Number.isFinite(item.totalBytes) && item.totalBytes > 0
+                ? Math.max(0, Math.min(100, item.receivedBytes * 100 / item.totalBytes))
+                : null;
+            return h("div", {
+                role: "status",
+                "aria-live": "polite",
+                "aria-label": `${item.filename}，${formatDownloadSpeed(item.speed)}`,
+                style: {
+                    boxSizing: "border-box",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    width: "min(340px, 42vw)",
+                    minWidth: 220,
+                    height: 34,
+                    padding: "0 8px",
+                    borderRadius: 8,
+                    border: `1px solid ${token("--dsw-alias-border-l2", "#3a3a40")}`,
+                    background: token("--dsw-alias-bg-elevated", "#1c1c20"),
+                    color: token("--dsw-alias-label-secondary", "#a1a1aa"),
+                    fontSize: 11,
+                    lineHeight: "14px",
+                    whiteSpace: "nowrap"
+                }
+            },
+            h("style", null, "@keyframes cockpit-download-indeterminate{from{transform:translateX(-110%)}to{transform:translateX(240%)}}.cockpit-download-indeterminate{animation:cockpit-download-indeterminate 1.15s linear infinite}@media(prefers-reduced-motion:reduce){.cockpit-download-indeterminate{animation:none}}"),
+            h("span", {
+                title: item.filename,
+                style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: token("--dsw-alias-label-primary", "#f4f4f5") }
+            }, stem),
+            h("span", { style: { flex: "none", fontSize: 10, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, extension),
+            h("span", { style: { flex: "none", width: 96, display: "flex", flexDirection: "column", alignItems: "stretch" } },
+                h("span", { style: { height: 12, fontSize: 10, lineHeight: "12px", textAlign: "right", fontVariantNumeric: "tabular-nums" } }, formatDownloadSpeed(item.speed)),
+                h("span", { style: { display: "block", height: 4, marginTop: 2, borderRadius: 999, overflow: "hidden", background: token("--dsw-alias-bg-sunken", "#121215") } },
+                    h("span", {
+                        className: percent === null ? "cockpit-download-indeterminate" : "",
+                        style: {
+                            display: "block",
+                            width: percent === null ? "45%" : `${percent}%`,
+                            height: "100%",
+                            borderRadius: 999,
+                            background: token("--dsw-alias-state-business-primary", "#4f7cff"),
+                            transition: percent === null ? "none" : "width 160ms ease-out"
+                        }
+                    })
+                )
+            ),
+            active.length > 1 ? h("span", { style: { flex: "none", fontSize: 10 } }, `+${active.length - 1}`) : null
+            );
+        }
+
+        function EmptySessionCleanup({ t, workspaceRegistry, usePanelInfo }) {
+            const panel = usePanelInfo((value) => value);
+            const section = typeof panel === "string"
+                ? panel
+                : panel?.settingsSection ?? panel?.activeSettingsSection ?? panel?.sectionId ?? panel?.section ?? panel?.panelId ?? panel?.panel ?? panel?.id ?? panel?.key ?? panel?.activePanelId;
+            const [state, setState] = React.useState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
+            if (section && section !== "archived-sessions") return null;
+
+            const call = async (method, input) => {
+                if (!workspaceRegistry || typeof workspaceRegistry[method] !== "function") throw new Error("workspaceRegistry unavailable");
+                const response = input === void 0 ? await workspaceRegistry[method]() : await workspaceRegistry[method](input);
+                if (response && response.ok === false) throw new Error(response.error?.message ?? `${method} failed`);
+                return response && response.ok === true ? response.value : response;
+            };
+            const preview = async () => {
+                setState({ phase: "loading", candidates: [], skipped: 0, error: "", result: null });
+                try {
+                    const value = await call("previewEmptySessions");
+                    setState({ phase: value.items.length > 0 ? "confirm" : "empty", candidates: value.items, skipped: value.skipped.length, error: "", result: null });
+                } catch (error) {
+                    setState({ phase: "error", candidates: [], skipped: 0, error: error instanceof Error ? error.message : String(error), result: null });
+                }
+            };
+            const remove = async () => {
+                setState((current) => ({ ...current, phase: "deleting", error: "" }));
+                try {
+                    const result = await call("deleteEmptySessions", { sessionIds: state.candidates.map((item) => item.sessionId) });
+                    setState({ phase: "done", candidates: [], skipped: 0, error: "", result });
+                } catch (error) {
+                    setState((current) => ({ ...current, phase: "error", error: error instanceof Error ? error.message : String(error) }));
+                }
+            };
+            const close = () => setState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
+            const busy = state.phase === "loading" || state.phase === "deleting";
+            return h("span", { style: { position: "relative", display: "inline-flex" } },
+                h("button", {
+                    type: "button",
+                    disabled: busy,
+                    onClick: preview,
+                    style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 },
+                    title: t("emptyCleanup")
+                }, busy ? "…" : t("emptyCleanup")),
+                state.phase !== "idle" ? h("span", {
+                    role: state.phase === "confirm" ? "alertdialog" : "status",
+                    style: {
+                        position: "absolute",
+                        zIndex: 100,
+                        top: "calc(100% + 8px)",
+                        right: 0,
+                        width: 300,
+                        boxSizing: "border-box",
+                        padding: 12,
+                        borderRadius: 10,
+                        border: `1px solid ${token("--dsw-alias-border-l2", "#3a3a40")}`,
+                        background: token("--dsw-alias-bg-elevated", "#1c1c20"),
+                        boxShadow: "0 12px 32px rgba(0,0,0,.35)",
+                        color: token("--dsw-alias-label-primary", "#f4f4f5"),
+                        fontSize: 12,
+                        lineHeight: 1.6
+                    }
+                },
+                state.phase === "loading" ? h("span", null, "…") : null,
+                state.phase === "empty" ? h("span", null, t("emptyNone")) : null,
+                state.phase === "confirm" ? h("span", null, t("emptyConfirm", { count: state.candidates.length, skipped: state.skipped })) : null,
+                state.phase === "deleting" ? h("span", null, "…") : null,
+                state.phase === "done" ? h("span", null, t("emptyDeleteResult", {
+                    deleted: state.result.deletedSessionIds.length,
+                    skipped: state.result.skippedSessionIds.length,
+                    failed: state.result.failures.length
+                })) : null,
+                state.phase === "error" ? h("span", null, `${t("emptyFailed")}${state.error}`) : null,
+                h("span", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 } },
+                    state.phase === "confirm" ? h("button", { type: "button", onClick: remove, style: { ...buttonStyle, padding: "5px 10px", fontSize: 12 } }, t("emptyDeleteConfirm")) : null,
+                    h("button", { type: "button", onClick: close, style: { ...ghostButtonStyle, padding: "5px 10px", fontSize: 12 } }, t("cancel"))
+                )) : null
+            );
+        }
+
         function parseNotice(raw, sessionId) {
             if (typeof raw !== "string" || !raw.startsWith(NOTICE_PREFIX)) return null;
             const fraction = raw.match(/第\s*(\d+)\s*\/\s*(\d+)\s*次/);
@@ -131,6 +360,33 @@ window.__ModuleLoader__.load({
                 code: code ? code[1] : null,
                 reason: reason ? reason[1].trim() : null
             };
+        }
+
+        /** User-facing Chinese reason shown immediately after the failure code. */
+        function chineseFailureReason(notice) {
+            const code = String(notice.code || "UNKNOWN").toUpperCase();
+            const detail = String(notice.reason || "");
+            if (/insufficient[ _-]?(?:balance|funds)|quota\s+(?:is\s+)?exhausted|usage\s+limit|free\s+quota|recharge|wallet|余额不足|额度(?:不足|耗尽|已用完)|钱包余额|充值后继续使用/iu.test(detail)) {
+                return "账户额度不足或已用完";
+            }
+            const reasons = {
+                TRANSPORT: "网络连接或传输中断",
+                TIMEOUT: "模型请求超时",
+                RATE_LIMIT: "模型服务暂时限流，请稍后重试",
+                SERVER: "模型服务端暂时异常",
+                EMPTY_RESPONSE: "模型未返回有效内容",
+                QUOTA: "账户额度不足或已用完",
+                AUTH: "模型认证失败，请检查登录状态或 API Key",
+                AUTHENTICATION: "模型认证失败，请检查登录状态或 API Key",
+                UNAUTHORIZED: "模型认证失败，请检查登录状态或 API Key",
+                ACCOUNT: "账户或登录状态异常",
+                SIGN_IN: "账户或登录状态异常",
+                SIGNIN: "账户或登录状态异常",
+                BAD_REQUEST: "请求参数不被当前模型接受",
+                INVALID_REQUEST: "请求参数不被当前模型接受",
+                UNKNOWN: "未知模型请求错误"
+            };
+            return reasons[code] ?? "模型请求失败，请查看日志了解详情";
         }
 
         // -------------------------------------------------------------------
@@ -186,9 +442,8 @@ window.__ModuleLoader__.load({
             const accent = retry ? "#e8a33d" : notice.kind === "blocked" ? "#9a72ff" : "#ef5f5f";
             const title = retry ? t("noticeRetry") : notice.kind === "halt" ? t("noticeHalt") : t("noticeBlocked");
             const detail = [
-                notice.attempt !== null ? `第 ${notice.attempt}/${notice.max} 次` : null,
-                notice.code ? `${t("failureCode")} ${notice.code}` : null,
-                notice.reason
+                notice.attempt !== null ? t("attempt", { attempt: notice.attempt, max: notice.max }) : null,
+                notice.code ? `${t("failureCode")} ${notice.code}：${chineseFailureReason(notice)}` : chineseFailureReason(notice)
             ].filter(Boolean).join(" · ");
             return h("div", {
                 role: "status",
@@ -246,6 +501,7 @@ window.__ModuleLoader__.load({
             const [saveState, setSaveState] = React.useState("idle");
 
             const load = React.useCallback(async () => {
+                setSaveState("idle");
                 setState((current) => ({ ...current, phase: "loading", error: null }));
                 try {
                     // `ctx.remote.settings` is the Remote namespace service; the
@@ -282,10 +538,13 @@ window.__ModuleLoader__.load({
                 load();
             }, [load]);
 
-            const set = (key, value) => setState((current) => ({ ...current, draft: { ...current.draft, [key]: value } }));
+            const set = (key, value) => {
+                setSaveState("idle");
+                setState((current) => ({ ...current, draft: { ...current.draft, [key]: value } }));
+            };
 
             const save = async () => {
-                if (!state.view || !settings) return;
+                if (!state.view || !settings || NUMERIC_FIELDS.some(([key]) => state.draft?.[key] === "")) return;
                 setSaveState("saving");
                 try {
                     const ops = [];
@@ -299,8 +558,15 @@ window.__ModuleLoader__.load({
                     }
                     const response = await settings.mutate(state.view.ns, ops, state.view.revision);
                     if (response && response.ok === false) throw new Error(response.error?.message ?? "settings.mutate failed");
-                    const view = response && response.ok === true ? response.value : response;
-                    setState({ phase: "ready", view, draft: pickValues(view?.value), error: null });
+                    const returned = response && response.ok === true ? response.value : response;
+                    const view = returned && typeof returned === "object" && typeof returned.ns === "string"
+                        ? returned
+                        : {
+                            ...state.view,
+                            value: { ...state.view.value, ...state.draft },
+                            revision: typeof returned?.revision === "number" ? returned.revision : state.view.revision + 1
+                        };
+                    setState({ phase: "ready", view, draft: pickValues(view.value), error: null });
                     setSaveState("saved");
                 } catch (error) {
                     setSaveState("idle");
@@ -309,8 +575,9 @@ window.__ModuleLoader__.load({
             };
 
             const draft = state.draft ?? pickValues(undefined);
-            const total = (1 + draft.providerRetryMaxRetries) * (1 + draft.maxAttempts);
+            const total = (1 + Number(draft.providerRetryMaxRetries || 0)) * (1 + Number(draft.maxAttempts || 0));
             const busy = saveState === "saving";
+            const numericIncomplete = NUMERIC_FIELDS.some(([key]) => draft[key] === "");
 
             return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
                 h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("title")),
@@ -321,7 +588,7 @@ window.__ModuleLoader__.load({
                         t("unavailable"),
                         state.available.length > 0
                             ? h("div", { style: { marginTop: 4, fontSize: 12, color: token("--dsw-alias-label-tertiary", "#7c7c85") } },
-                                `已注册：${state.available.join(", ")}`)
+                                `${t("registered")}${state.available.join(", ")}`)
                             : null)
                     : null,
                 state.error ? h("div", { style: { fontSize: 13, color: "#ef5f5f", marginBottom: 12 } }, `${state.phase === "error" ? t("loadFailed") : t("saveFailed")}${state.error}`) : null,
@@ -341,7 +608,13 @@ window.__ModuleLoader__.load({
                                     step,
                                     value: draft[key],
                                     disabled: !draft.enabled,
-                                    onChange: (event) => set(key, Math.max(min, Math.min(max, Number(event.target.value) || 0))),
+                                    onChange: (event) => {
+                                        const raw = event.target.value;
+                                        set(key, raw === "" ? "" : Math.max(min, Math.min(max, Number(raw))));
+                                    },
+                                    onBlur: () => {
+                                        if (draft[key] === "") set(key, min);
+                                    },
                                     style: inputStyle
                                 })
                             ))
@@ -358,11 +631,11 @@ window.__ModuleLoader__.load({
                         h("div", null, t("formula")),
                         h("div", { style: { marginTop: 6, color: token("--dsw-alias-label-secondary", "#a1a1aa") } },
                             `= (1 + ${draft.providerRetryMaxRetries}) × (1 + ${draft.maxAttempts}) = ${total}`),
-                        h("div", { style: { marginTop: 6, fontSize: 20, fontWeight: 700 } }, `${total} 次`)
+                        h("div", { style: { marginTop: 6, fontSize: 20, fontWeight: 700 } }, `${total} ${t("requestUnit")}`)
                     )
                 ),
                 h("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center" } },
-                    h("button", { type: "button", onClick: save, disabled: busy || state.phase !== "ready", style: { ...buttonStyle, opacity: busy || state.phase !== "ready" ? 0.55 : 1 } },
+                    h("button", { type: "button", onClick: save, disabled: busy || numericIncomplete || state.phase !== "ready", style: { ...buttonStyle, opacity: busy || numericIncomplete || state.phase !== "ready" ? 0.55 : 1 } },
                         busy ? t("saving") : t("save")),
                     h("button", { type: "button", onClick: load, style: ghostButtonStyle }, t("reload")),
                     saveState === "saved" ? h("span", { style: { fontSize: 12, color: "#4fbf7a" } }, t("saved")) : null
@@ -389,6 +662,7 @@ window.__ModuleLoader__.load({
 
             try {
                 const noticeStore = createNoticeStore();
+                const downloadStore = createDownloadStore();
                 const cockpitUi = {
                     name: "cockpit-ui",
                     inject: ["slots", "locale", "remote", "remote.settings"],
@@ -403,14 +677,35 @@ window.__ModuleLoader__.load({
 
                         if (remote && typeof remote.$on === "function") {
                             uiCtx.effect(() => {
-                                const off = remote.$on("api-session/error", (sessionId, message) => {
+                                const off = remote.$on("cockpit/auto-continue", (sessionId, message) => {
                                     const notice = parseNotice(message, sessionId);
                                     if (notice) noticeStore.show(notice);
                                 });
                                 return typeof off === "function" ? off : () => {};
                             }, "dsh-cockpit: auto-continue notice relay");
+                            uiCtx.effect(() => {
+                                const off = remote.$on("cockpit/download", (record) => downloadStore.update(record));
+                                return () => {
+                                    if (typeof off === "function") off();
+                                    downloadStore.clear();
+                                };
+                            }, "dsh-cockpit: download progress relay");
                         }
 
+                        uiCtx.slots.inject("conversation.session.header.utilities", () => uiCtx.slots.register({
+                            name: "conversation.session.header.utilities",
+                            id: "cockpit-download-activity",
+                            order: -6,
+                            locale: NS,
+                            inject: () => ({ store: downloadStore })
+                        }, DownloadActivityCard));
+                        uiCtx.slots.inject("settings.action", () => uiCtx.slots.register({
+                            name: "settings.action",
+                            id: "cockpit-empty-session-cleanup",
+                            order: 10,
+                            locale: NS,
+                            inject: () => ({ t, workspaceRegistry: remote?.workspaceRegistry })
+                        }, EmptySessionCleanup));
                         uiCtx.slots.inject("conversation.input.dock", () => uiCtx.slots.register({
                             name: "conversation.input.dock",
                             id: "cockpit-auto-continue-notice",

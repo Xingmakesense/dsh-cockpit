@@ -97,10 +97,13 @@ function discoveryInvocations() {
     sourceLocation: { file: "@michengai/dsh-archive-manager/lib/workspace.js", line: 1, column: 1 }
   }));
 }
+function sequenceOrFallback(value, index) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : index;
+}
 function extractConversation(events) {
   if (!Array.isArray(events)) throw new TypeError("\u4F1A\u8BDD\u65E5\u5FD7\u65E0\u6548");
   const messages = [];
-  for (const event of events.map(record)) {
+  for (const [index, event] of events.map(record).entries()) {
     if (event.type !== "user/message" && event.type !== "assistant/message") continue;
     const data = event.data && typeof event.data === "object" ? record(event.data) : {};
     const message = data.message && typeof data.message === "object" ? record(data.message) : data;
@@ -109,7 +112,7 @@ function extractConversation(events) {
     if (role === "user" && source.kind && source.kind !== "user") continue;
     const content = message?.content;
     const text = typeof content === "string" ? content : Array.isArray(content) ? content.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("\n") : "";
-    if (text.trim()) messages.push({ seq: sequence(event.seq), role, text });
+    if (text.trim()) messages.push({ seq: sequenceOrFallback(event.seq, index), role, text });
   }
   return messages;
 }
@@ -131,7 +134,7 @@ function previewConversation(messages, query) {
   return { hasEarlier: start > 0, hasLater: start + 8 < messages.length, messages: messages.slice(start, start + 8).map((row) => {
     const match = findTextRange(row.text, needle)?.start ?? -1;
     const offset = match >= 2e3 ? Math.max(0, match - 300) : 0;
-    return { ...row, text: sliceWholeCharacters(row.text, offset, offset + 2e3), truncated: row.text.length > 2e3 };
+    return { ...row, text: sliceWholeCharacters(row.text, offset, offset + 2e3), truncated: offset > 0 || row.text.length > offset + 2e3 };
   }) };
 }
 function findTextRange(text, query) {

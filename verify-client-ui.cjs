@@ -57,6 +57,10 @@ function main() {
             describe: async () => ({ namespaces: [] }),
             mutate: async () => ({ value: {}, revision: 1 })
         },
+        workspaceRegistry: {
+            previewEmptySessions: async () => ({ items: [], skipped: [] }),
+            deleteEmptySessions: async () => ({ requestedSessionIds: [], deletedSessionIds: [], skippedSessionIds: [], failures: [] })
+        },
         $on(event, handler) {
             subscribed.push({ event, handler });
             return () => {};
@@ -116,6 +120,18 @@ function main() {
     assert(dock.definition.id === "cockpit-auto-continue-notice", "inline notice id changed");
     assert(!registrations.some((entry) => entry.definition.name === "shell.overlay"), "the notice must not cover the frame");
 
+    const downloadCard = registrations.find((entry) => entry.definition.name === "conversation.session.header.utilities");
+    assert(downloadCard !== undefined, "active downloads must register into the session header utilities");
+    assert(downloadCard.definition.id === "cockpit-download-activity", "download card id changed");
+    assert(downloadCard.definition.order === -6, "download card must stay left of the schedule catalog");
+    assert(typeof downloadCard.component === "function", "download card must receive a component");
+
+    const emptyCleanup = registrations.find((entry) => entry.definition.name === "settings.action");
+    assert(emptyCleanup !== undefined, "empty-session cleanup must register into settings.action");
+    assert(emptyCleanup.definition.id === "cockpit-empty-session-cleanup", "empty-session cleanup id changed");
+    assert(typeof emptyCleanup.component === "function", "empty-session cleanup must receive a component");
+    assert(typeof emptyCleanup.definition.inject().workspaceRegistry === "object", "empty-session cleanup must receive the archive remote namespace");
+
     const tab = registrations.find((entry) => entry.definition.name === "settings.plugins.tab");
     assert(tab !== undefined, "auto-continue settings page must register into settings.plugins.tab");
     assert(tab.definition.id === "auto-continue", "settings tab id changed");
@@ -127,9 +143,15 @@ function main() {
         "settings page must receive ctx.remote.settings (a carrier-only remote has no .settings)"
     );
 
-    const relay = subscribed.find((entry) => entry.event === "api-session/error");
-    assert(relay !== undefined, "cockpit must subscribe to the api-session/error relay");
-    assert(() => relay.handler("s1", "unrelated error") === undefined, "unrelated errors must not throw");
+    const relay = subscribed.find((entry) => entry.event === "cockpit/auto-continue");
+    assert(relay !== undefined, "cockpit must subscribe to the dedicated auto-continue relay");
+    assert(relay.handler("s1", "unrelated error") === undefined, "unrelated errors must not throw");
+
+    const downloadRelay = subscribed.find((entry) => entry.event === "cockpit/download");
+    assert(downloadRelay !== undefined, "cockpit must subscribe to the dedicated download progress relay");
+    const progress = { id: "download-1", filename: "session.zip", extension: ".zip", receivedBytes: 512, totalBytes: 1024, state: "downloading", startedAt: 1, updatedAt: 1 };
+    downloadRelay.handler(progress);
+    downloadRelay.handler({ ...progress, receivedBytes: 1024, state: "completed", updatedAt: 2 });
 
     console.log("all client UI checks passed");
 }

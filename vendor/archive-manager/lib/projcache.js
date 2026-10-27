@@ -98,17 +98,23 @@ class SafeSessionTable {
 }
 async function readSourceRecords(ctx, spec, label) {
   let domain;
+  let openedHere = false;
   try {
-    domain = await ctx.storageDomain.open(spec);
+    domain = ctx.storageDomain.get?.(spec.name) ?? await (async () => {
+      openedHere = true;
+      return ctx.storageDomain.open(spec);
+    })();
     return { opened: true, records: [...domain.table("sessions").entries()] };
   } catch (error) {
     ctx.logger.warn(`archive-manager projcache: ${label} cache import skipped: ${String(error)}`);
     return { opened: false, records: [] };
   } finally {
-    try {
-      await domain?.close();
-    } catch (error) {
-      ctx.logger.warn(`archive-manager projcache: ${label} cache close failed: ${String(error)}`);
+    if (openedHere) {
+      try {
+        await domain?.close();
+      } catch (error) {
+        ctx.logger.warn(`archive-manager projcache: ${label} cache close failed: ${String(error)}`);
+      }
     }
   }
 }
@@ -151,11 +157,41 @@ function normalizeLegacyRecord(record) {
   checkpointRecord.parse(normalized);
   return normalized;
 }
-async function importMissingRecords(ctx, target, records, label) {
-  let imported = 0;
+function sessionExistenceProbe(ctx) {
+  let knownIdsPromise;
+  return async (sessionId) => {
+    if (ctx.get("sessions")?.get(sessionId) !== void 0) return true;
+    const persistence = ctx.get("sessionPersistence");
+    if (typeof persistence?.list === "function") {
+      knownIdsPromise ??= (async () => {
+        try {
+          const rows = await persistence.list();
+          return new Set(rows.map((item) => item?.header?.id ?? item?.id).filter((id) => typeof id === "string"));
+        } catch {
+          return null;
+        }
+      })();
+      const knownIds = await knownIdsPromise;
+      return knownIds === null ? null : knownIds.has(sessionId);
+    }
+    if (typeof persistence?.stat !== "function") return null;
+    try {
+      return await persistence.stat(sessionId) !== void 0;
+    } catch {
+      // An unavailable backend cannot prove that a cache row is orphaned.
+      return null;
+    }
+  };
+}
+async function importMissingRecords(ctx, target, records, label, stillExists) {
+  let imported = 0, skipped = 0;
   for (const [sessionId, record] of records) {
     if (target.has(sessionId)) continue;
     try {
+      if (stillExists && await stillExists(sessionId) === false) {
+        skipped += 1;
+        continue;
+      }
       const normalized = normalizeLegacyRecord(record);
       if (normalized === void 0) {
         ctx.logger.warn(`archive-manager projcache: ${label} row "${sessionId}" import skipped because its lifecycle identity is incomplete`);
@@ -167,6 +203,7 @@ async function importMissingRecords(ctx, target, records, label) {
       ctx.logger.warn(`archive-manager projcache: ${label} row "${sessionId}" import failed: ${String(error)}`);
     }
   }
+  if (skipped > 0) ctx.logger.warn(`archive-manager projcache: ${label} skipped ${skipped} row(s) for sessions that no longer exist`);
   return imported;
 }
 async function importPreviousProjectionCache(ctx, target, currentTable) {
@@ -175,14 +212,100 @@ async function importPreviousProjectionCache(ctx, target, currentTable) {
   const legacySafe = await readLegacySafeRecords(ctx, legacySafeProjectionCacheDomainSpec, "archive-manager v1");
   const legacy = sameSpec && currentTable !== void 0 ? { opened: true, records: [...currentTable.entries()] } : await readSourceRecords(ctx, legacyProjectionCacheDomainSpec, "legacy v3");
   let imported = 0;
-  if (legacySafeV2.opened) imported += await importMissingRecords(ctx, target, legacySafeV2.records, "archive-manager v2");
-  if (legacySafe.opened) imported += await importMissingRecords(ctx, target, legacySafe.records, "archive-manager v1");
+  const stillExists = sessionExistenceProbe(ctx);
+  if (legacySafeV2.opened) imported += await importMissingRecords(ctx, target, legacySafeV2.records, "archive-manager v2", stillExists);
+  if (legacySafe.opened) imported += await importMissingRecords(ctx, target, legacySafe.records, "archive-manager v1", stillExists);
   if (!sameSpec) {
     const current = currentTable !== void 0 ? { opened: true, records: [...currentTable.entries()] } : await readSourceRecords(ctx, projectionCacheDomainSpec, "current");
-    if (current.opened) imported += await importMissingRecords(ctx, target, current.records, "current");
+    if (current.opened) imported += await importMissingRecords(ctx, target, current.records, "current", stillExists);
   }
-  if (legacy.opened) imported += await importMissingRecords(ctx, target, legacy.records, "legacy v3");
+  if (legacy.opened) imported += await importMissingRecords(ctx, target, legacy.records, "legacy v3", stillExists);
   return imported;
+}
+
+const purgeDomainSpecs = [
+  { spec: safeProjectionCacheDomainSpec, key: projectionCacheStorageKey },
+  { spec: legacySafeV2ProjectionCacheDomainSpec, key: projectionCacheStorageKey },
+  { spec: legacySafeProjectionCacheDomainSpec, key: projectionCacheStorageKey },
+  // The official table is keyed by the raw SessionId, not by the safe hash.
+  { spec: projectionCacheDomainSpec, key: (sessionId) => sessionId }
+];
+
+/**
+ * Remove one Session from every current/legacy projection-cache domain.
+ * Existing domains are borrowed and never closed; only domains opened by this
+ * operation are closed again. Every domain is attempted before errors surface.
+ */
+async function purgeSessionFromEveryCacheDomain(ctx, sessionId) {
+  const cache = ctx.get("sessionProjectionCache");
+  const failures = [];
+  try {
+    await cache?.whenIdle?.();
+    await cache?.delete?.(sessionId);
+  } catch (error) {
+    failures.push(error);
+  }
+  for (const { spec, key } of purgeDomainSpecs) {
+    let domain;
+    let openedHere = false;
+    try {
+      domain = ctx.storageDomain.get?.(spec.name) ?? await (async () => {
+        openedHere = true;
+        return ctx.storageDomain.open(spec);
+      })();
+      await domain.table("sessions").delete(key(sessionId));
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      if (openedHere && domain !== void 0) {
+        try {
+          await domain.close();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, `could not purge projection cache rows for "${sessionId}"`);
+}
+
+/** Remove only rows whose Session is conclusively absent; unknown reads keep data. */
+async function pruneOrphanProjectionCache(ctx) {
+  const stillExists = sessionExistenceProbe(ctx);
+  for (const { spec } of purgeDomainSpecs) {
+    let domain;
+    let openedHere = false;
+    try {
+      domain = ctx.storageDomain.get?.(spec.name) ?? await (async () => {
+        openedHere = true;
+        return ctx.storageDomain.open(spec);
+      })();
+      const table = domain.table("sessions");
+      for (const [physicalKey, stored] of table.entries()) {
+        const candidates = new Set();
+        if (typeof physicalKey === "string") candidates.add(physicalKey);
+        if (stored && typeof stored === "object" && typeof stored.sessionId === "string") candidates.add(stored.sessionId);
+        for (const candidate of candidates) {
+          // Safe domains store a hash as their physical key; their record carries
+          // the real id. A key-only hash has no sessionId and is kept.
+          if (!/^session-[A-Za-z0-9_-]+$/u.test(candidate)) continue;
+          if (await stillExists(candidate) !== false) continue;
+          await table.delete(physicalKey);
+          break;
+        }
+      }
+    } catch (error) {
+      ctx.logger.warn(`archive-manager projcache: orphan scan of ${spec.name} skipped: ${String(error)}`);
+    } finally {
+      if (openedHere && domain !== void 0) {
+        try {
+          await domain.close();
+        } catch (error) {
+          ctx.logger.warn(`archive-manager projcache: orphan-scan domain close failed: ${String(error)}`);
+        }
+      }
+    }
+  }
 }
 var ArchiveProjectionCache = class extends CacheBase {
   /** 已永久删除的会话：其投影缓存行不再允许写入。 */
@@ -340,6 +463,7 @@ async function installArchiveProjectionCache(cache) {
     target.table = table;
     target[projectionOverlay] = true;
     installed = true;
+    await pruneOrphanProjectionCache(target.ctx);
     let disposal;
     return () => disposal ??= (async () => {
       if (target[projectionOverlay] !== true) return;
@@ -374,5 +498,7 @@ export {
   legacySafeProjectionCacheDomainSpec,
   legacySafeV2ProjectionCacheDomainSpec,
   projectionCacheStorageKey,
+  pruneOrphanProjectionCache,
+  purgeSessionFromEveryCacheDomain,
   safeProjectionCacheDomainSpec
 };

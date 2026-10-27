@@ -170,6 +170,7 @@ export {
   childCatalogFact,
   classifySessionError,
   decodeRepairLog,
+  decompressFrame,
   normalizeAutomationSources,
   prepareAutomationRepair
 };

@@ -11,70 +11,74 @@
  * reference test: anything mentioned by any surviving session is kept, and only
  * objects older than the grace period are removed.
  */
-import { appendFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
-import * as zlib from "node:zlib";
-
-const zstdDecompressSync = typeof zlib.zstdDecompressSync === "function" ? zlib.zstdDecompressSync : undefined;
+import { decompressFrame } from "./vendor/archive-manager/lib/session-repair.js";
 
 const HOUR = 3_600_000;
 const GRACE_MS = 24 * HOUR;
-const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const HASH_RE = /[0-9a-f]{64}/g;
+const AUDIT_MAX_BYTES = 2 * 1024 * 1024;
+const TRANSCRIPT_MAX_BYTES = 32 * 1024 * 1024;
 
 /** Resolve the DSH home directory the same way the harness does. */
 export function dshHome(override) {
     return override ?? process.env.DSH_HOME ?? join(homedir(), ".dsh");
 }
 
-/** Append one JSON line; creates the audit directory on first use. */
+/** Append one JSON line; retain at most the current file and one 2 MiB generation. */
 export async function appendAudit(home, record) {
     const directory = join(dshHome(home), "storages", "cockpit-audit");
     await mkdir(directory, { recursive: true });
-    await appendFile(join(directory, "session-deletions.jsonl"), `${JSON.stringify(record)}\n`, "utf8");
-}
-
-function decodeZstd(buffer) {
-    if (typeof zstdDecompressSync !== "function") return undefined;
-    const starts = [];
-    let at = 0;
-    while ((at = buffer.indexOf(ZSTD_MAGIC, at)) !== -1) {
-        starts.push(at);
-        at += 4;
-    }
-    if (starts.length === 0) return undefined;
-    const parts = [];
-    for (let index = 0; index < starts.length; index += 1) {
-        const end = index + 1 < starts.length ? starts[index + 1] : buffer.length;
-        try {
-            parts.push(zstdDecompressSync(buffer.subarray(starts[index], end)));
-        } catch {
-            /* a torn tail frame is expected while a session is being appended */
+    const path = join(directory, "session-deletions.jsonl");
+    try {
+        const info = await stat(path);
+        if (info.size >= AUDIT_MAX_BYTES) {
+            await rm(`${path}.1`, { force: true });
+            await rename(path, `${path}.1`);
         }
+    } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
     }
-    return parts.length > 0 ? Buffer.concat(parts).toString("utf8") : undefined;
+    await appendFile(path, `${JSON.stringify(record)}\n`, "utf8");
 }
 
-/** Read a session transcript as text, transparently handling zstd frames. */
-async function readTranscript(path) {
+/** Scan hashes frame-by-frame without parsing or materializing a whole JSONL transcript. */
+async function collectTranscriptHashes(path, referenced) {
     const buffer = await readFile(path);
-    if (path.endsWith(".zstd")) {
-        const decoded = decodeZstd(buffer);
-        if (decoded === undefined) throw new Error(`cannot decode zstd transcript ${path}`);
-        return decoded;
+    if (buffer.length > TRANSCRIPT_MAX_BYTES) throw new Error(`transcript exceeds ${TRANSCRIPT_MAX_BYTES} bytes: ${path}`);
+    let carry = "";
+    const scan = (text) => {
+        const combined = carry + text;
+        for (const match of combined.matchAll(HASH_RE)) referenced.add(match[0]);
+        carry = combined.slice(-63);
+    };
+    if (!path.endsWith(".zstd")) {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+        if (!text.endsWith("\n")) throw new Error(`transcript has a torn tail: ${path}`);
+        scan(text);
+        return;
     }
-    return buffer.toString("utf8");
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    let offset = 0, size = 0;
+    while (offset < buffer.length) {
+        const result = decompressFrame(buffer.subarray(offset), TRANSCRIPT_MAX_BYTES - size);
+        if (!result.engine.bytesWritten) throw new Error(`transcript has an incomplete zstd frame: ${path}`);
+        offset += result.engine.bytesWritten;
+        size += result.buffer.length;
+        scan(decoder.decode(result.buffer, { stream: true }));
+    }
+    const tail = carry + decoder.decode();
+    if (!tail.endsWith("\n")) throw new Error(`transcript has a torn tail: ${path}`);
+    for (const match of tail.matchAll(HASH_RE)) referenced.add(match[0]);
 }
 
 async function listFiles(root, depth = 0) {
-    if (depth > 4) return [];
-    let entries;
-    try {
-        entries = await readdir(root, { withFileTypes: true });
-    } catch {
-        return [];
-    }
+    if (depth > 4) throw new Error(`session transcript nesting exceeds the supported layout: ${root}`);
+    // A missing/unreadable directory is not an empty directory: the caller must
+    // abort the sweep rather than infer that its attachments are unreferenced.
+    const entries = await readdir(root, { withFileTypes: true });
     const files = [];
     for (const entry of entries) {
         const path = join(root, entry.name);
@@ -87,11 +91,15 @@ async function listFiles(root, depth = 0) {
 /** Collect every 64-hex token mentioned by any surviving session transcript. */
 async function collectReferencedHashes(home) {
     const referenced = new Set();
-    const files = await listFiles(join(dshHome(home), "sessions"));
+    let files;
+    try {
+        files = await listFiles(join(dshHome(home), "sessions"));
+    } catch {
+        return { referenced, complete: false, scanned: 0 };
+    }
     for (const file of files) {
         try {
-            const text = await readTranscript(file);
-            for (const match of text.matchAll(HASH_RE)) referenced.add(match[0]);
+            await collectTranscriptHashes(file, referenced);
         } catch {
             /* unreadable transcript: keep everything rather than guess */
             return { referenced, complete: false, scanned: files.length };

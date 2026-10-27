@@ -11,6 +11,7 @@ import { sessionDir } from "@deepseek-ai/dsh-spill-local";
 import { trackTombstone } from "./tombstone.js";
 import { defineDomain } from "@deepseek-ai/dsh-storage-domain";
 import { favoriteInputSchema, favoriteStateSchema, favoriteInvocations } from "./archive-organizer.js";
+import { purgeSessionFromEveryCacheDomain } from "./projcache.js";
 const favoriteDomainSpec = defineDomain({
   name: "archive_manager_favorites",
   version: 1,
@@ -82,7 +83,9 @@ const ARCHIVE_REMOTE_METHODS = [
   "previewArchivedSession",
   "sessionDetails",
   "diagnoseSession",
-  "repairSession"
+  "repairSession",
+  "previewEmptySessions",
+  "deleteEmptySessions"
 ];
 function markRemoteMethod(instance, method) {
   const context = {
@@ -163,6 +166,27 @@ const deletedBatchSchema = {
     ))
       throw new TypeError("failures must contain sessionId/message objects");
     return value;
+  }
+};
+const EMPTY_SESSION_INITIALIZATION_EVENTS = new Set(["agent-preset/selected", "model/selection"]);
+const emptyPreviewSchema = {
+  parse(input) {
+    const value = record(input);
+    if (!value || !Array.isArray(value.items) || !Array.isArray(value.skipped)) throw new TypeError("empty-session preview is invalid");
+    for (const item of value.items) {
+      if (!item || typeof item.sessionId !== "string" || typeof item.archived !== "boolean") throw new TypeError("empty-session candidate is invalid");
+    }
+    for (const item of value.skipped) {
+      if (!item || typeof item.sessionId !== "string" || typeof item.reason !== "string" || item.reason.length > 200) throw new TypeError("empty-session skip reason is invalid");
+    }
+    return value;
+  }
+};
+const emptyDeleteInputSchema = {
+  parse(input) {
+    const value = record(input);
+    if (!value || !Array.isArray(value.sessionIds) || value.sessionIds.length === 0 || value.sessionIds.length > 200) throw new TypeError("sessionIds must contain 1-200 sessions");
+    return { sessionIds: [...new Set(value.sessionIds.map(sessionIdSchema.parse))] };
   }
 };
 const archivedSessionMetadataSchema = {
@@ -253,6 +277,41 @@ const ARCHIVE_MANAGER_INVOCATIONS = [
     invocation: { kind: "direct" },
     parameters: [],
     result: strictCodec("@michengai/dsh-archive-manager/types#ArchivedSessionMetadata", archivedSessionMetadataSchema),
+    sourceLocation: {
+      file: "@michengai/dsh-archive-manager/lib/workspace.js",
+      line: 1,
+      column: 1
+    }
+  },
+  {
+    id: "@michengai/dsh-archive-manager#workspaceRegistry/previewEmptySessions",
+    service: "workspaceRegistry",
+    namespace: "workspaceRegistry",
+    method: "previewEmptySessions",
+    invocation: { kind: "direct" },
+    parameters: [],
+    result: strictCodec("@michengai/dsh-archive-manager/types#EmptySessionPreview", emptyPreviewSchema),
+    sourceLocation: {
+      file: "@michengai/dsh-archive-manager/lib/workspace.js",
+      line: 1,
+      column: 1
+    }
+  },
+  {
+    id: "@michengai/dsh-archive-manager#workspaceRegistry/deleteEmptySessions",
+    service: "workspaceRegistry",
+    namespace: "workspaceRegistry",
+    method: "deleteEmptySessions",
+    invocation: { kind: "direct" },
+    parameters: [
+      {
+        name: "input",
+        wire: "input",
+        source: "json",
+        codec: strictCodec("@michengai/dsh-archive-manager/types#EmptySessionDeleteInput", emptyDeleteInputSchema)
+      }
+    ],
+    result: strictCodec("@michengai/dsh-archive-manager/types#DeletedBatch", deletedBatchSchema),
     sourceLocation: {
       file: "@michengai/dsh-archive-manager/lib/workspace.js",
       line: 1,
@@ -401,10 +460,11 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
           if (typeof location?.path === "string") {
             const path = jsonlSessionDirectory(persistence, header, location) ?? location.path;
             await lstat(path);
-            item.path = path;
+            // The browser needs a diagnostic artifact name, never a host path.
+            item.path = basename(path);
           }
         } catch (error) {
-          item.error = "\u8DEF\u5F84\u4E0D\u53EF\u7528\uFF1A" + errorMessage(error).slice(0, 350);
+          item.error = "\u8DEF\u5F84\u4E0D\u53EF\u7528\uFF1A\u65E0\u6CD5\u8BFB\u53D6\u4F1A\u8BDD\u65E5\u5FD7\u6240\u5728\u4F4D\u7F6E";
         }
         item.turnCount = countConversationTurns(await this.readConversationEvents(sessionId));
       } catch (error) {
@@ -679,6 +739,77 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
       ...repairedSessionIds.length === 0 ? {} : { repairedSessionIds }
     };
   }
+  async emptySessionSummaries() {
+    const controller = this.ctx.get("sessionController");
+    if (typeof controller?.list !== "function") return null;
+    try {
+      const result = await controller.list({});
+      const rows = result?.items ?? result?.value?.items ?? [];
+      return new Map(rows.map((item) => [item.sessionId, item]));
+    } catch {
+      // Direct event inspection below remains a conservative fallback.
+      return null;
+    }
+  }
+  async classifyEmptySession(header, summaries) {
+    const sessionId = header.id;
+    const archived = this.requireState().archivedSessionIds.includes(sessionId);
+    try {
+      if (this.ctx.get("sessions")?.get(sessionId) || this.ctx.get("agents")?.get(sessionId)) return { empty: false, reason: "live", archived };
+      if (header.origin === "subagent" || header.parentSession || header.isSeeded) return { empty: false, reason: "lineage", archived };
+      const summary = summaries?.get(sessionId);
+      if (summary && (!summary.blank || summary.running || summary.agentAvailable)) return { empty: false, reason: "not-blank-summary", archived };
+      const persistence = this.ctx.get("sessionPersistence");
+      if (!persistence) return { empty: false, reason: "read-failed", archived };
+      const stored = await this.readStoredProjectionSource(persistence, sessionId);
+      if ((stored.inheritedEventCount ?? 0) > 0) return { empty: false, reason: "lineage", archived };
+      const events = stored.events ?? [];
+      // Only known configuration/initialization events are allowed. Any user,
+      // assistant, tool, request, task, title, or unknown event preserves the row.
+      const initializationOnly = EMPTY_SESSION_INITIALIZATION_EVENTS;
+      if (events.some((event) => !initializationOnly.has(event.type))) return { empty: false, reason: "content", archived };
+      const activity = await this.sessionActivity(sessionId);
+      if (activity.length > 0) return { empty: false, reason: "activity", archived };
+      return { empty: true, archived };
+    } catch {
+      return { empty: false, reason: "read-failed", archived };
+    }
+  }
+  /** Read-only preview; deletion re-runs this classification after confirmation. */
+  async previewEmptySessions() {
+    const summaries = await this.emptySessionSummaries();
+    const items = [], skipped = [];
+    for (const header of await this.listStoredHeaders()) {
+      const verdict = await this.classifyEmptySession(header, summaries);
+      if (verdict.empty) items.push({ sessionId: header.id, archived: verdict.archived });
+      else skipped.push({ sessionId: header.id, reason: verdict.reason });
+    }
+    return { items, skipped };
+  }
+  async deleteEmptySessions(input) {
+    const { sessionIds: requestedSessionIds } = emptyDeleteInputSchema.parse(input);
+    return this.enqueueOperation(async () => {
+      const preview = await this.previewEmptySessions();
+      const eligible = new Set(preview.items.map((item) => item.sessionId));
+      const deletedSessionIds = [], skippedSessionIds = [], failures = [];
+      for (const sessionId of requestedSessionIds) {
+        if (!eligible.has(sessionId)) {
+          skippedSessionIds.push(sessionId);
+          continue;
+        }
+        try {
+          const result = await this.deleteSessionCore(sessionId);
+          if (result?.skipped && !this.deletedSessionIds.has(sessionId)) skippedSessionIds.push(sessionId);
+          else deletedSessionIds.push(sessionId);
+        } catch (error) {
+          failures.push({ sessionId, message: deletionFailureMessage(error) });
+        }
+      }
+      const summary = { requestedSessionIds, deletedSessionIds, skippedSessionIds, failures };
+      this.publishDeletionAudit({ action: "delete-empty-sessions", ...summary });
+      return summary;
+    });
+  }
   /** 从会话原文补齐缺失的派生缓存；任何失败都只降级为原有无摘要列表。 */
   async repairArchivedProjection(header) {
     const cache = this.ctx.get("sessionProjectionCache");
@@ -866,7 +997,7 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
       for (const sessionId of requestedSessionIds) {
         try {
           const result = await this.deleteSessionCore(sessionId, descendantHeaders);
-          if (result?.skipped) skippedSessionIds.push(sessionId);
+          if (result?.skipped && !this.deletedSessionIds.has(sessionId)) skippedSessionIds.push(sessionId);
           else deletedSessionIds.push(sessionId);
         } catch (error) {
           failures.push({ sessionId, message: deletionFailureMessage(error) });
@@ -889,23 +1020,52 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
    */
   async cleanupUnknownArchivedSession(sessionId) {
     const projCache = this.ctx.get("sessionProjectionCache");
-    await projCache?.whenIdle?.();
-    if (projCache !== void 0) {
-      await projCache.delete(sessionId);
-      await projCache.whenIdle?.();
-      projCache.clearTombstone?.(sessionId);
+    try {
+      await this.purgeSessionRegistryTraces(sessionId);
+    } finally {
+      await projCache?.whenIdle?.();
+      projCache?.clearTombstone?.(sessionId);
+      this.forgetIndexedSession(sessionId);
+      this.publishDeletedSession(sessionId);
     }
-    await this.cleanSpill(sessionId);
-    await this.removeFromWorkspaceAccounts(sessionId);
-    const state = this.requireState();
-    if (state.archivedSessionIds.includes(sessionId)) {
-      await this.setState({
-        ...state,
-        archivedSessionIds: state.archivedSessionIds.filter(
-          (id) => id !== sessionId
-        )
-      });
-    }
+  }
+  /** Clear all non-transcript traces. Every step is attempted before errors surface. */
+  async purgeSessionRegistryTraces(sessionId, { includeProjectionCache = true } = {}) {
+    const failures = [];
+    const attempt = async (operation) => {
+      try {
+        await operation();
+      } catch (error) {
+        failures.push(error);
+      }
+    };
+    if (includeProjectionCache) await attempt(() => purgeSessionFromEveryCacheDomain(this.ctx, sessionId));
+    await attempt(() => this.cleanSpill(sessionId));
+    await attempt(async () => {
+      const state = this.requireState();
+      const pinnedSessionIds = Array.isArray(state.pinnedSessionIds)
+        ? state.pinnedSessionIds.filter((id) => id !== sessionId)
+        : state.pinnedSessionIds;
+      const archivedSessionIds = state.archivedSessionIds.filter((id) => id !== sessionId);
+      if (pinnedSessionIds !== state.pinnedSessionIds || archivedSessionIds.length !== state.archivedSessionIds.length) {
+        await this.setState({
+          ...state,
+          ...Array.isArray(state.pinnedSessionIds) ? { pinnedSessionIds } : {},
+          archivedSessionIds
+        });
+      }
+    });
+    await attempt(() => this.removeFromWorkspaceAccounts(sessionId));
+    // Inline intentionally: setSessionFavorite() re-enters enqueueOperation(),
+    // which would deadlock because deleteSessionCore already owns that queue.
+    await attempt(async () => {
+      const domain = await this.favoriteDomain();
+      const favorites = favoriteStateSchema.parse(domain.global.get());
+      if (favorites.favoriteSessionIds.includes(sessionId)) {
+        await domain.global.set({ favoriteSessionIds: favorites.favoriteSessionIds.filter((id) => id !== sessionId) });
+      }
+    });
+    if (failures.length > 0) throw new AggregateError(failures, `could not purge every registry trace for "${sessionId}"`);
   }
   /** 以归档集合顺序解析批量目标，避免依赖浏览器尚未加载完整的摘要投影。 */
   archivedSessionIdsForTarget(input) {
@@ -941,6 +1101,9 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
   async deleteSession(sessionId) {
     return this.enqueueOperation(async () => {
       try {
+        if (!this.requireState().archivedSessionIds.includes(sessionId)) {
+          throw new Error("请先归档会话，再执行永久删除；空对话清理使用独立校验入口");
+        }
         const result = await this.deleteSessionCore(sessionId);
         this.publishDeletionAudit({
           action: "delete-session",
@@ -978,22 +1141,10 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
       sessions.detachEntered(entry);
     } else if (sessions !== void 0)
       await this.publishColdSessionRemoval(sessionId, sessions);
-    const projCache = this.ctx.get("sessionProjectionCache");
-    await projCache?.whenIdle?.();
-    if (projCache !== void 0) await projCache.delete(sessionId);
+    await purgeSessionFromEveryCacheDomain(this.ctx, sessionId);
     await this.deleteDescendants(sessionId, descendantHeaders);
-    await this.cleanSpill(sessionId);
     await this.removeTranscriptDirectory(sessionId);
-    const state = this.requireState();
-    if (state.archivedSessionIds.includes(sessionId)) {
-      await this.setState({
-        ...state,
-        archivedSessionIds: state.archivedSessionIds.filter(
-          (id) => id !== sessionId
-        )
-      });
-    }
-    await this.removeFromWorkspaceAccounts(sessionId);
+    await this.purgeSessionRegistryTraces(sessionId, { includeProjectionCache: false });
     this.forgetIndexedSession(sessionId);
     if (deletedHeader !== void 0)
       this.deletedIdentities.set(sessionId, headerIdentity(deletedHeader));
@@ -1192,15 +1343,14 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
   /** 把 id 从每个工作区记录中移除，并刷新实体快照。 */
   async removeFromWorkspaceAccounts(sessionId) {
     const table = this.requireTable();
-    const state = this.requireState();
-    for (const workspaceId of state.workspaceIds) {
-      const record2 = table.get(workspaceId);
+    for (const [workspaceId, record2] of table.entries()) {
       if (record2 === void 0 || !record2.sessionIds.includes(sessionId)) continue;
       const next = await table.update(workspaceId, (current) => ({
         ...current,
         sessionIds: current.sessionIds.filter((id) => id !== sessionId),
         updatedAt: /* @__PURE__ */ (/* @__PURE__ */ new Date()).toISOString()
       }));
+      if (next === void 0) continue;
       const entity = this.entities.get(workspaceId);
       if (entity !== void 0) entity.record = next;
     }

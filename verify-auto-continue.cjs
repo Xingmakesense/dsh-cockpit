@@ -211,6 +211,67 @@ async function main() {
         fire("session/event", { id: agent.id }, { type: "turn/start", data: {} });
         await sleep(60);
         assert(delivered.length === 0, "a new turn must cancel a pending delayed retry");
+        fire("agent/error", { agent, error: failure("SERVER"), turn: 2 });
+        fire("agent/status", { agent, status: "idle" });
+        await sleep(60);
+        assert(delivered.length === 1, "cancelling a delayed retry must not consume the attempt budget");
+    }
+
+    // --- turn/end fallback and per-Turn dedupe --------------------------------
+    {
+        const { ctx, fire, emitted } = makeContext();
+        const { agent, delivered } = makeAgent();
+        ctx.agents = { get: (id) => id === agent.id ? agent : undefined };
+        await apply(ctx, { enabled: true, delayMs: 0 });
+        fire("session/event", { id: agent.id }, {
+            type: "turn/end",
+            data: { turn: 1, reason: { kind: "error", error: { code: "TIMEOUT", message: "pi-ai stream idle timeout" } } }
+        });
+        assert(delivered.length === 1, "a terminal turn/end error must arm continuation without agent/error");
+        assert(emitted.length === 1, "the turn/end fallback must publish one notice");
+    }
+    {
+        const { ctx, fire, emitted } = makeContext();
+        const { agent, delivered } = makeAgent();
+        ctx.agents = { get: () => agent };
+        await apply(ctx, { enabled: true, delayMs: 0 });
+        fire("agent/error", { agent, error: failure("TRANSPORT"), turn: 1 });
+        fire("session/event", { id: agent.id }, {
+            type: "turn/end",
+            data: { turn: 1, reason: { kind: "error", error: { code: "TRANSPORT", message: "TRANSPORT failure" } } }
+        });
+        fire("agent/status", { agent, status: "idle" });
+        assert(delivered.length === 1, "agent/error and turn/end for the same Turn must charge once");
+        assert(emitted.length === 1, "the same Turn must not emit duplicate notices");
+    }
+
+    // --- explicit quota is never retried, including a rate-limit-shaped report -
+    for (const failureValue of [
+        { code: "QUOTA", message: "TeamoRouter 钱包余额不足，请充值后继续使用" },
+        { code: "RATE_LIMIT", message: "You've reached your 5-hour usage limit. Please purchase extra usage." }
+    ]) {
+        const { ctx, fire, emitted } = makeContext();
+        const { agent, delivered } = makeAgent();
+        ctx.agents = { get: () => agent };
+        await apply(ctx, { enabled: true, delayMs: 0 });
+        fire("session/event", { id: agent.id }, {
+            type: "turn/end",
+            data: { turn: 1, reason: { kind: "error", error: failureValue } }
+        });
+        assert(delivered.length === 0, "hard quota must never be retried");
+        assert(emitted.length === 1 && emitted[0].args[1].includes("QUOTA"), "hard quota must be reported as QUOTA");
+    }
+
+    // --- disposal cancels a delayed retry --------------------------------------
+    {
+        const { ctx, fire, disposers } = makeContext();
+        await apply(ctx, { enabled: true, delayMs: 20 });
+        const { agent, delivered } = makeAgent();
+        fire("agent/error", { agent, error: failure("SERVER"), turn: 1 });
+        fire("agent/status", { agent, status: "idle" });
+        for (const dispose of disposers) dispose();
+        await sleep(60);
+        assert(delivered.length === 0, "plugin disposal must clear every delayed retry timer");
     }
 
     // --- agent disposal forgets the counter -----------------------------------

@@ -82,7 +82,10 @@ function checkClientArtifact() {
         'name: "conversation.input.dock"',
         'id: "auto-continue"',
         'name: "settings.plugins.tab"',
-        '"api-session/error"'
+        '"cockpit/auto-continue"',
+        'id: "cockpit-download-activity"',
+        '"cockpit/download"',
+        'id: "cockpit-empty-session-cleanup"'
     ]) {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
     }
@@ -124,7 +127,7 @@ function checkManifest() {
     assert(pkg.dsh?.client?.platform === "web", "dsh.client.platform must stay web");
 
     // Everything the host/client load at runtime has to be packed.
-    for (const required of ["host.js", "auto-continue.js", "archive.js", "maintenance.js", "client.js", "vendor", "cordis.patch.yml", "locale/*.json", "icon.svg"]) {
+    for (const required of ["host.js", "auto-continue.js", "archive.js", "maintenance.js", "downloads.js", "client.js", "vendor", "cordis.patch.yml", "locale/*.json", "icon.svg"]) {
         assert(pkg.files.includes(required), `package.json files is missing ${required}`);
     }
 

@@ -12,6 +12,7 @@ import { trackTombstone } from "./tombstone.js";
 import { defineDomain } from "@deepseek-ai/dsh-storage-domain";
 import { favoriteInputSchema, favoriteStateSchema, favoriteInvocations } from "./archive-organizer.js";
 import { purgeSessionFromEveryCacheDomain } from "./projcache.js";
+import { emptySessionPrescreen } from "./empty-session-policy.js";
 const favoriteDomainSpec = defineDomain({
   name: "archive_manager_favorites",
   version: 1,
@@ -755,10 +756,10 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
     const sessionId = header.id;
     const archived = this.requireState().archivedSessionIds.includes(sessionId);
     try {
-      if (this.ctx.get("sessions")?.get(sessionId) || this.ctx.get("agents")?.get(sessionId)) return { empty: false, reason: "live", archived };
-      if (header.origin === "subagent" || header.parentSession || header.isSeeded) return { empty: false, reason: "lineage", archived };
+      const live = Boolean(this.ctx.get("sessions")?.get(sessionId) || this.ctx.get("agents")?.get(sessionId));
       const summary = summaries?.get(sessionId);
-      if (summary && (!summary.blank || summary.running || summary.agentAvailable)) return { empty: false, reason: "not-blank-summary", archived };
+      const prescreen = emptySessionPrescreen({ live, header, summary });
+      if (prescreen !== null) return { empty: false, reason: prescreen, archived };
       const persistence = this.ctx.get("sessionPersistence");
       if (!persistence) return { empty: false, reason: "read-failed", archived };
       const stored = await this.readStoredProjectionSource(persistence, sessionId);

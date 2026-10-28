@@ -152,6 +152,20 @@ async function main() {
     }));
     assert(invalid.status === 400, "cleanup POST must reject non-string session ids");
 
+    // --- empty-session pre-screen ---------------------------------------------
+    const { emptySessionPrescreen } = await import("./vendor/archive-manager/lib/empty-session-policy.js");
+    const fresh = { blank: true, running: false, agentAvailable: true };
+    assert(emptySessionPrescreen({ live: true, header: { id: "fresh" }, summary: fresh }) === null,
+        "a fresh blank Session with an attached idle Agent must remain a cleanup candidate");
+    assert(emptySessionPrescreen({ live: false, header: { id: "fresh" }, summary: fresh }) === null,
+        "agentAvailable alone must not mark a cold blank Session as non-empty");
+    assert(emptySessionPrescreen({ live: true, header: { id: "running" }, summary: { ...fresh, running: true } }) === "live",
+        "a running live Session must stay protected");
+    assert(emptySessionPrescreen({ live: true, header: { id: "content" }, summary: { ...fresh, blank: false } }) === "live",
+        "a non-blank live Session must stay protected");
+    assert(emptySessionPrescreen({ live: false, header: { id: "child", parentSession: "parent" }, summary: fresh }) === "lineage",
+        "fork and subagent Sessions must stay protected");
+
     console.log("all archive-layer checks passed");
 }
 

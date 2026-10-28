@@ -1,4 +1,4 @@
-# DSH Cockpit v2.8.2
+# DSH Cockpit v2.8.3
 
 DSH（DeepSeek Harness）套件插件：**自动续轮**、**会话归档管理**、**下载进度**、**删除审计**与**孤儿附件清理**。
 

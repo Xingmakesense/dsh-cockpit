@@ -424,8 +424,7 @@ window.__ModuleLoader__.load({
                     type: "button",
                     disabled: busy,
                     onClick: preview,
-                    style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 },
-                    title: t("emptyCleanup")
+                    style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 }
                 }, busy ? "…" : t("emptyCleanup")),
                 state.phase !== "idle" ? h("span", {
                     role: state.phase === "confirm" ? "alertdialog" : "status",

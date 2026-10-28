@@ -193,8 +193,9 @@ async function main() {
     const cleanupNode = findNode(settingsTree, (node) => typeof node.type === "function" && node.type.name === "EmptySessionCleanup");
     assert(cleanupNode !== undefined, "cleanup component must be embedded in the auto-continue page");
     const cleanupView = cleanupNode.type(cleanupNode.props);
-    const cleanupButton = findNode(cleanupView, (node) => node.type === "button" && node.props?.title === "emptyCleanup");
+    const cleanupButton = findNode(cleanupView, (node) => node.type === "button" && node.props?.children === "emptyCleanup");
     assert(cleanupButton !== undefined, "cleanup button must be rendered");
+    assert(!Object.hasOwn(cleanupButton.props, "title"), "cleanup button must not show a native hover tooltip");
     const realFetch = globalThis.fetch;
     let cleanupRequest;
     globalThis.fetch = async (url, init) => {

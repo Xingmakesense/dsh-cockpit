@@ -161,10 +161,31 @@ async function main() {
         "agentAvailable alone must not mark a cold blank Session as non-empty");
     assert(emptySessionPrescreen({ live: true, header: { id: "running" }, summary: { ...fresh, running: true } }) === "live",
         "a running live Session must stay protected");
-    assert(emptySessionPrescreen({ live: true, header: { id: "content" }, summary: { ...fresh, blank: false } }) === "live",
-        "a non-blank live Session must stay protected");
+    assert(emptySessionPrescreen({ live: true, header: { id: "no-summary" }, summary: undefined }) === null,
+        "a live Session without a list summary must reach content and activity checks");
+    assert(emptySessionPrescreen({ live: true, header: { id: "content" }, summary: { ...fresh, blank: false } }) === null,
+        "persisted events, not a possibly stale blank flag, must decide content");
+    assert(emptySessionPrescreen({ live: false, header: { id: "cold-running" }, summary: { ...fresh, running: true } }) === "not-blank-summary",
+        "a cold summary that reports a running turn must stay protected");
     assert(emptySessionPrescreen({ live: false, header: { id: "child", parentSession: "parent" }, summary: fresh }) === "lineage",
         "fork and subagent Sessions must stay protected");
+
+    const { hasOnlyInitializationEvents } = await import("./vendor/archive-manager/lib/empty-session-policy.js");
+    const initializationEvents = [
+        "agent-preset/selected",
+        "model/selection",
+        "permission/preset",
+        "sandbox/mode",
+        "approval/policy",
+        "subagent/model-selection-policy",
+        "session/end-seed"
+    ].map((type) => ({ type }));
+    assert(hasOnlyInitializationEvents(initializationEvents) === true,
+        "new-Session configuration events must not be mistaken for conversation content");
+    assert(hasOnlyInitializationEvents([...initializationEvents, { type: "user/message" }]) === false,
+        "a real user message must preserve the Session");
+    assert(hasOnlyInitializationEvents([{ type: "session/title" }]) === false,
+        "unknown or metadata events must remain conservative");
 
     console.log("all archive-layer checks passed");
 }

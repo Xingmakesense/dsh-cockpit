@@ -12,7 +12,7 @@ import { trackTombstone } from "./tombstone.js";
 import { defineDomain } from "@deepseek-ai/dsh-storage-domain";
 import { favoriteInputSchema, favoriteStateSchema, favoriteInvocations } from "./archive-organizer.js";
 import { purgeSessionFromEveryCacheDomain } from "./projcache.js";
-import { emptySessionPrescreen } from "./empty-session-policy.js";
+import { emptySessionPrescreen, hasOnlyInitializationEvents } from "./empty-session-policy.js";
 const favoriteDomainSpec = defineDomain({
   name: "archive_manager_favorites",
   version: 1,
@@ -169,7 +169,6 @@ const deletedBatchSchema = {
     return value;
   }
 };
-const EMPTY_SESSION_INITIALIZATION_EVENTS = new Set(["agent-preset/selected", "model/selection"]);
 const emptyPreviewSchema = {
   parse(input) {
     const value = record(input);
@@ -756,10 +755,16 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
     const sessionId = header.id;
     const archived = this.requireState().archivedSessionIds.includes(sessionId);
     try {
-      const live = Boolean(this.ctx.get("sessions")?.get(sessionId) || this.ctx.get("agents")?.get(sessionId));
+      const sessions = this.ctx.get("sessions");
+      const liveSession = sessions?.get(sessionId);
+      const live = Boolean(liveSession || this.ctx.get("agents")?.get(sessionId));
       const summary = summaries?.get(sessionId);
       const prescreen = emptySessionPrescreen({ live, header, summary });
       if (prescreen !== null) return { empty: false, reason: prescreen, archived };
+      // The stored log is authoritative. Flush an attached Session first so a
+      // prompt whose events are still in the persistence buffer cannot be
+      // mistaken for content-free.
+      if (liveSession !== void 0 && typeof sessions?.flush === "function") await sessions.flush(liveSession);
       const persistence = this.ctx.get("sessionPersistence");
       if (!persistence) return { empty: false, reason: "read-failed", archived };
       const stored = await this.readStoredProjectionSource(persistence, sessionId);
@@ -767,8 +772,7 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
       const events = stored.events ?? [];
       // Only known configuration/initialization events are allowed. Any user,
       // assistant, tool, request, task, title, or unknown event preserves the row.
-      const initializationOnly = EMPTY_SESSION_INITIALIZATION_EVENTS;
-      if (events.some((event) => !initializationOnly.has(event.type))) return { empty: false, reason: "content", archived };
+      if (!hasOnlyInitializationEvents(events)) return { empty: false, reason: "content", archived };
       const activity = await this.sessionActivity(sessionId);
       if (activity.length > 0) return { empty: false, reason: "activity", archived };
       return { empty: true, archived };

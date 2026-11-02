@@ -214,6 +214,15 @@ async function main() {
     assert(relay !== undefined, "cockpit must subscribe to the compatible api-session/error relay");
     assert(relay.handler("s1", "unrelated error") === undefined, "unrelated errors must not throw");
 
+    relay.handler("s1", "【自动续轮】第 1/6 次 · 故障码 TIMEOUT · 正在自动重新发起请求（不写入对话）。失败原因：模型请求超时");
+    const noticeProps = dock.definition.inject();
+    const noticeTree = dock.component({ ...noticeProps, sessionId: "s1" });
+    assert(noticeTree.props.style.background === "#000000", "auto-continue notice must always use a black background");
+    assert(noticeTree.props.style.color === "#ffffff", "auto-continue notice must always use white text");
+    const failureCode = findNode(noticeTree, (node) => node.type === "span" && node.props?.style?.color === "#ff4d4f");
+    assert(failureCode !== undefined && textOf(failureCode) === "TIMEOUT", "only the failure code must be highlighted red");
+    noticeProps.store.close();
+
     const downloadRelay = subscribed.find((entry) => entry.event === "api-session/error");
     assert(downloadRelay !== undefined, "cockpit must use the same relay for download progress");
     const progress = { id: "download-1", filename: "session.zip", extension: ".zip", receivedBytes: 512, totalBytes: 1024, state: "downloading", startedAt: 1, updatedAt: 1 };

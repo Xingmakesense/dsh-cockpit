@@ -557,10 +557,18 @@ window.__ModuleLoader__.load({
             const retry = notice.kind === "retry";
             const accent = retry ? "#e8a33d" : notice.kind === "blocked" ? "#9a72ff" : "#ef5f5f";
             const title = retry ? t("noticeRetry") : notice.kind === "halt" ? t("noticeHalt") : t("noticeBlocked");
-            const detail = [
-                notice.attempt !== null ? t("attempt", { attempt: notice.attempt, max: notice.max }) : null,
-                notice.code ? `${t("failureCode")} ${notice.code}：${chineseFailureReason(notice)}` : chineseFailureReason(notice)
-            ].filter(Boolean).join(" · ");
+            const reason = chineseFailureReason(notice);
+            const detail = notice.code
+                ? [
+                    `${t("failureCode")} `,
+                    h("span", { key: "code", style: { color: "#ff4d4f", fontWeight: 600 } }, notice.code),
+                    `：${reason}`
+                ]
+                : [reason];
+            if (notice.attempt !== null) detail.unshift(t("attempt", { attempt: notice.attempt, max: notice.max }), " · ");
+            // The notice deliberately stays black-on-white across both DSH
+            // themes. Only the code is red; the accent stripe/dot and all other
+            // colours keep their existing values.
             return h("div", {
                 role: "status",
                 "aria-live": "polite",
@@ -574,20 +582,20 @@ window.__ModuleLoader__.load({
                     padding: "6px 10px",
                     borderRadius: 8,
                     borderLeft: `3px solid ${accent}`,
-                    background: token("--dsw-alias-bg-elevated", "#1c1c20"),
-                    color: token("--dsw-alias-label-secondary", "#a1a1aa"),
+                    background: "#000000",
+                    color: "#ffffff",
                     fontSize: 12,
                     lineHeight: "18px"
                 }
             },
             h("span", { style: { flex: "none", width: 7, height: 7, borderRadius: 999, background: accent } }),
-            h("strong", { style: { flex: "none", color: token("--dsw-alias-label-primary", "#f4f4f5"), fontWeight: 600 } }, title),
+            h("strong", { style: { flex: "none", color: "#ffffff", fontWeight: 600 } }, title),
             h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detail),
             h("button", {
                 type: "button",
                 "aria-label": t("close"),
                 onClick: () => store.close(),
-                style: { flex: "none", border: "none", background: "transparent", color: "inherit", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }
+                style: { flex: "none", border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }
             }, "×")
             );
         }

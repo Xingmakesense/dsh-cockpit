@@ -52,8 +52,21 @@
 | `node verify-client-ui.cjs` | 用 stub loader 评估 `client.js`，校验续轮/下载事件、`conversation.input.dock`、标题栏下载卡片、归档空对话按钮与设置页 |
 | `node verify-downloads.cjs` | Host 附件响应包装、真实字节计数、文件名/后缀、完成状态与 `api-session/error` relay |
 | `node verify-maintenance.cjs` | 审计落盘、附件引用/孤儿/宽限期、多帧与损坏 zstd、空 home 安全阀 |
+| `node verify-theme-tokens.cjs` | `client-wrapper.js` 只引用 DSH 真实存在的 `--dsw-*` 变量；浅色/深色两套主题下文字与进度条对比度达标 |
 
 发布前六项全绿，并执行 `node scripts/build-client.mjs --check` 与 `node --check host.js`。
+
+### 4.1 样式只能使用 DSH 已定义的变量
+
+`client-wrapper.js` 的内联样式全部走 `--dsw-*` 主题变量。写不存在的变量不会报错，只会静默回退到 fallback，
+于是深色 fallback 落在浅色页面上就变成“深底深字”。`--dsw-alias-bg-elevated` 与 `--dsw-alias-bg-sunken`
+就是这样踩过的坑，已分别改为 `--dsw-alias-bg-module-platform`、`--dsw-specific-input-major` 等真实变量。
+
+新增颜色时：
+
+1. 先在 DSH 主题里确认变量真实存在（`:root` 为浅色，`body[data-ds-dark-theme]` 为深色）；
+2. 优先用 `THEME` 映射表里的取值，回退值使用系统色或中性半透明色，不要写死深色；
+3. 更新 `verify-theme-tokens.cjs` 的 token 快照，并确认对比度断言仍然通过（正文 ≥ 4.5:1，图形 ≥ 3:1）。
 
 ## 5. 发布流程
 

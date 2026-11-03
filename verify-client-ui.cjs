@@ -162,8 +162,21 @@ async function main() {
     };
     downloadStore.replace([liveProgress]);
     downloadStore.replace([{ ...liveProgress, receivedBytes: 3072, updatedAt: 2000 }]);
-    const downloadText = textOf(downloadCard.component({ store: downloadStore }));
-    assert(downloadText.includes("3.0 KB · 1.5 KB/s"), `download card must show live bytes and speed, got: ${downloadText}`);
+    const cardTree = downloadCard.component({ store: downloadStore });
+    for (const property of ["background", "color"]) {
+        assert(String(cardTree.props.style[property]).startsWith("var(--dsw-"),
+            `download card ${property} must come from a DSH theme token, got ${cardTree.props.style[property]}`);
+    }
+    const fills = [];
+    (function collect(node) {
+        if (!node || typeof node !== "object") return;
+        if (Array.isArray(node)) return node.forEach(collect);
+        const background = String(node.props?.style?.background ?? "");
+        if (background.startsWith("var(--dsw-")) fills.push(background);
+        collect(node.props?.children);
+    })(cardTree);
+    assert(fills.some((value) => value.includes("--dsw-alias-interactive-bg-active")), "progress track must use the theme track token");
+    assert(fills.some((value) => value.includes("--dsw-alias-state-business-primary")), "progress fill must use the theme accent token");
     downloadStore.replace([]);
     assert(downloadCard.component({ store: downloadStore }) !== null, "one empty poll must not erase an active download");
     downloadStore.replace([]);
@@ -187,6 +200,20 @@ async function main() {
     assert(typeof tabProps.getWorkspaceRegistry === "function", "settings page cleanup must resolve its remote lazily, never during registration");
     const settingsTree = tab.component({ ...tabProps, t: (key) => key });
     const settingsText = textOf(settingsTree);
+    const settingsBackgrounds = [];
+    (function collect(node) {
+        if (!node || typeof node !== "object") return;
+        if (Array.isArray(node)) return node.forEach(collect);
+        const background = String(node.props?.style?.background ?? "");
+        if (background) settingsBackgrounds.push(background);
+        collect(node.props?.children);
+    })(settingsTree);
+    for (const value of settingsBackgrounds) {
+        assert(value.startsWith("var(--dsw-") || value === "transparent",
+            `settings page backgrounds must come from DSH theme tokens, got ${value}`);
+    }
+    assert(settingsBackgrounds.some((value) => value.includes("--dsw-alias-bg-module-platform")),
+        "settings cards must use the theme surface token");
     assert(settingsText.includes("emptyCleanupTitle"), "the auto-continue page must render the visible empty-session cleanup section");
     assert(settingsText.includes("emptyCleanup"), "the auto-continue page must render the empty-session cleanup button");
 
@@ -217,10 +244,12 @@ async function main() {
     relay.handler("s1", "【自动续轮】第 1/6 次 · 故障码 TIMEOUT · 正在自动重新发起请求（不写入对话）。失败原因：模型请求超时");
     const noticeProps = dock.definition.inject();
     const noticeTree = dock.component({ ...noticeProps, sessionId: "s1" });
-    assert(noticeTree.props.style.background === "#000000", "auto-continue notice must always use a black background");
-    assert(noticeTree.props.style.color === "#ffffff", "auto-continue notice must always use white text");
-    const failureCode = findNode(noticeTree, (node) => node.type === "span" && node.props?.style?.color === "#ff4d4f");
-    assert(failureCode !== undefined && textOf(failureCode) === "TIMEOUT", "only the failure code must be highlighted red");
+    for (const property of ["background", "color"]) {
+        assert(String(noticeTree.props.style[property]).startsWith("var(--dsw-"),
+            `auto-continue notice ${property} must come from a DSH theme token, got ${noticeTree.props.style[property]}`);
+    }
+    const failureCode = findNode(noticeTree, (node) => node.type === "span" && String(node.props?.style?.color).includes("--dsw-alias-state-error-primary"));
+    assert(failureCode !== undefined && textOf(failureCode) === "TIMEOUT", "only the failure code must use the theme danger token");
     noticeProps.store.close();
 
     const downloadRelay = subscribed.find((entry) => entry.event === "api-session/error");

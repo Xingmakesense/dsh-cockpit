@@ -319,29 +319,29 @@ window.__ModuleLoader__.load({
                     gap: 7,
                     width: "min(360px, 44vw)",
                     minWidth: 240,
-                    height: 34,
-                    padding: "0 8px",
+                    height: 36,
+                    padding: "0 9px",
                     borderRadius: 8,
-                    border: `1px solid ${token("--dsw-alias-border-l2", "#3a3a40")}`,
-                    background: token("--dsw-alias-bg-elevated", "#1c1c20"),
-                    color: token("--dsw-alias-label-secondary", "#a1a1aa"),
-                    fontSize: 11,
-                    lineHeight: "14px",
+                    border: `1px solid ${THEME.border}`,
+                    background: THEME.surface,
+                    color: THEME.textSecondary,
+                    fontSize: 12,
+                    lineHeight: "15px",
                     whiteSpace: "nowrap"
                 }
             },
             h("style", null, "@keyframes cockpit-download-indeterminate{from{transform:translateX(-110%)}to{transform:translateX(240%)}}.cockpit-download-indeterminate{animation:cockpit-download-indeterminate 1.15s linear infinite}@media(prefers-reduced-motion:reduce){.cockpit-download-indeterminate{animation:none}}"),
             h("span", {
                 title: item.filename,
-                style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: token("--dsw-alias-label-primary", "#f4f4f5") }
+                style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: THEME.text, fontWeight: 500 }
             }, stem),
-            h("span", { style: { flex: "none", fontSize: 10, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, extension),
+            h("span", { style: { flex: "none", fontSize: 11, color: THEME.textSecondary } }, extension),
             h("span", {
                 title: Number.isFinite(item.totalBytes) ? `${item.receivedBytes} / ${item.totalBytes} bytes` : `${item.receivedBytes} bytes`,
                 style: { flex: "none", width: 142, display: "flex", flexDirection: "column", alignItems: "stretch" }
             },
-                h("span", { style: { height: 12, fontSize: 10, lineHeight: "12px", textAlign: "right", fontVariantNumeric: "tabular-nums" } }, `${formatDownloadBytes(item.receivedBytes)} · ${statusText}`),
-                h("span", { style: { display: "block", height: 4, marginTop: 2, borderRadius: 999, overflow: "hidden", background: token("--dsw-alias-bg-sunken", "#121215") } },
+                h("span", { style: { height: 13, fontSize: 11, lineHeight: "13px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: THEME.textSecondary } }, `${formatDownloadBytes(item.receivedBytes)} · ${statusText}`),
+                h("span", { style: { display: "block", height: 5, marginTop: 2, borderRadius: 999, overflow: "hidden", background: THEME.track } },
                     h("span", {
                         className: !completed && percent === null ? "cockpit-download-indeterminate" : "",
                         style: {
@@ -349,13 +349,13 @@ window.__ModuleLoader__.load({
                             width: percent === null ? "45%" : `${percent}%`,
                             height: "100%",
                             borderRadius: 999,
-                            background: token("--dsw-alias-state-business-primary", "#4f7cff"),
+                            background: THEME.accent,
                             transition: !completed && percent === null ? "none" : "width 160ms ease-out"
                         }
                     })
                 )
             ),
-            active.length > 1 ? h("span", { style: { flex: "none", fontSize: 10 } }, `+${active.length - 1}`) : null
+            active.length > 1 ? h("span", { style: { flex: "none", fontSize: 11, color: THEME.textSecondary } }, `+${active.length - 1}`) : null
             );
         }
 
@@ -437,10 +437,10 @@ window.__ModuleLoader__.load({
                         boxSizing: "border-box",
                         padding: 12,
                         borderRadius: 10,
-                        border: `1px solid ${token("--dsw-alias-border-l2", "#3a3a40")}`,
-                        background: token("--dsw-alias-bg-elevated", "#1c1c20"),
+                        border: `1px solid ${THEME.border}`,
+                        background: THEME.surface,
                         boxShadow: "0 12px 32px rgba(0,0,0,.35)",
-                        color: token("--dsw-alias-label-primary", "#f4f4f5"),
+                        color: THEME.text,
                         fontSize: 12,
                         lineHeight: 1.6
                     }
@@ -507,18 +507,44 @@ window.__ModuleLoader__.load({
 
         // -------------------------------------------------------------------
         // Styles (inline; the harness theme tokens are used when present).
+        //
+        // Only tokens that DSH actually defines may be referenced: an unknown
+        // `var(--dsw-alias-…)` silently falls back, and a dark fallback on a
+        // light page turns into dark-on-dark text. `--dsw-alias-bg-elevated`
+        // and `--dsw-alias-bg-sunken` were exactly that trap. Fallbacks now use
+        // system colours or translucent neutrals, which follow both themes.
         // -------------------------------------------------------------------
         const token = (name, fallback) => `var(${name}, ${fallback})`;
+        const THEME = {
+            surface: token("--dsw-alias-bg-module-platform", "rgba(127, 127, 127, 0.12)"),
+            sunken: token("--dsw-alias-interactive-bg-hover", "rgba(127, 127, 127, 0.16)"),
+            field: token("--dsw-specific-input-major", "Canvas"),
+            border: token("--dsw-alias-border-l2", "rgba(127, 127, 127, 0.32)"),
+            text: token("--dsw-alias-label-primary", "CanvasText"),
+            textSecondary: token("--dsw-alias-label-secondary", "rgba(127, 127, 127, 0.95)"),
+            track: token("--dsw-alias-interactive-bg-active", "rgba(127, 127, 127, 0.3)"),
+            accent: token("--dsw-alias-state-business-primary", "#4176e6"),
+            // State colours are tuned for fills and icons; as small text they
+            // are too light on the light surface (warn ~2.6:1, success ~2.1:1).
+            // Mixing 55% state colour with the theme's primary label keeps the
+            // hue but lands above 4.5:1 on both themes (light #f5f6f7, dark
+            // #353638); the mix direction follows the theme automatically.
+            warnText: `color-mix(in srgb, ${token("--dsw-alias-state-warn-primary", "#f59e0b")} 55%, ${token("--dsw-alias-label-primary", "CanvasText")})`,
+            dangerText: `color-mix(in srgb, ${token("--dsw-alias-state-error-primary", "#ec1313")} 55%, ${token("--dsw-alias-label-primary", "CanvasText")})`,
+            successText: `color-mix(in srgb, ${token("--dsw-alias-state-success-primary", "#22c55e")} 55%, ${token("--dsw-alias-label-primary", "CanvasText")})`,
+            onAccent: token("--dsw-alias-label-primary-foreground", "#fff"),
+            shadow: token("--dsw-shadow-lv3", "0 0 1px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.12)")
+        };
         const cardBase = {
-            background: token("--dsw-alias-bg-elevated", "#1c1c20"),
-            color: token("--dsw-alias-label-primary", "#f4f4f5"),
-            border: `1px solid ${token("--dsw-alias-border-l2", "#3a3a40")}`,
+            background: THEME.surface,
+            color: THEME.text,
+            border: `1px solid ${THEME.border}`,
             borderRadius: 14,
-            boxShadow: "0 24px 64px rgba(0, 0, 0, 0.45)"
+            boxShadow: THEME.shadow
         };
         const labelStyle = {
             fontSize: 12,
-            color: token("--dsw-alias-label-secondary", "#a1a1aa"),
+            color: THEME.textSecondary,
             marginBottom: 4
         };
         const inputStyle = {
@@ -526,25 +552,25 @@ window.__ModuleLoader__.load({
             boxSizing: "border-box",
             padding: "8px 10px",
             borderRadius: 8,
-            border: `1px solid ${token("--dsw-alias-border-l2", "#3a3a40")}`,
-            background: token("--dsw-alias-bg-sunken", "#121215"),
-            color: token("--dsw-alias-label-primary", "#f4f4f5"),
+            border: `1px solid ${THEME.border}`,
+            background: THEME.field,
+            color: THEME.text,
             fontSize: 13
         };
         const buttonStyle = {
             padding: "8px 16px",
             borderRadius: 8,
             border: "none",
-            background: token("--dsw-alias-state-business-primary", "#4f7cff"),
-            color: "#fff",
+            background: token("--dsw-alias-button-primary-fill", "#4176e6"),
+            color: THEME.onAccent,
             fontSize: 13,
             cursor: "pointer"
         };
         const ghostButtonStyle = {
             ...buttonStyle,
             background: "transparent",
-            border: `1px solid ${token("--dsw-alias-border-l2", "#3a3a40")}`,
-            color: token("--dsw-alias-label-primary", "#f4f4f5")
+            border: `1px solid ${THEME.border}`,
+            color: THEME.text
         };
 
         // Inline notice: one slim row in the conversation column (above the
@@ -555,20 +581,20 @@ window.__ModuleLoader__.load({
             if (!notice) return null;
             if (notice.sessionId !== undefined && sessionId !== undefined && notice.sessionId !== sessionId) return null;
             const retry = notice.kind === "retry";
-            const accent = retry ? "#e8a33d" : notice.kind === "blocked" ? "#9a72ff" : "#ef5f5f";
+            const accent = retry ? THEME.warnText : notice.kind === "blocked" ? THEME.accent : THEME.dangerText;
             const title = retry ? t("noticeRetry") : notice.kind === "halt" ? t("noticeHalt") : t("noticeBlocked");
             const reason = chineseFailureReason(notice);
             const detail = notice.code
                 ? [
                     `${t("failureCode")} `,
-                    h("span", { key: "code", style: { color: "#ff4d4f", fontWeight: 600 } }, notice.code),
+                    h("span", { key: "code", style: { color: THEME.dangerText, fontWeight: 600 } }, notice.code),
                     `：${reason}`
                 ]
                 : [reason];
             if (notice.attempt !== null) detail.unshift(t("attempt", { attempt: notice.attempt, max: notice.max }), " · ");
-            // The notice deliberately stays black-on-white across both DSH
-            // themes. Only the code is red; the accent stripe/dot and all other
-            // colours keep their existing values.
+            // The notice follows the DSH theme instead of pinning black on
+            // white: a fixed black bar was unreadable-on-dark and clashed with
+            // the light theme. The accent stripe/dot still marks severity.
             return h("div", {
                 role: "status",
                 "aria-live": "polite",
@@ -582,20 +608,21 @@ window.__ModuleLoader__.load({
                     padding: "6px 10px",
                     borderRadius: 8,
                     borderLeft: `3px solid ${accent}`,
-                    background: "#000000",
-                    color: "#ffffff",
+                    background: THEME.surface,
+                    color: THEME.text,
                     fontSize: 12,
-                    lineHeight: "18px"
+                    lineHeight: "18px",
+                    boxShadow: THEME.shadow
                 }
             },
             h("span", { style: { flex: "none", width: 7, height: 7, borderRadius: 999, background: accent } }),
-            h("strong", { style: { flex: "none", color: "#ffffff", fontWeight: 600 } }, title),
+            h("strong", { style: { flex: "none", color: THEME.text, fontWeight: 600 } }, title),
             h("span", { style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, detail),
             h("button", {
                 type: "button",
                 "aria-label": t("close"),
                 onClick: () => store.close(),
-                style: { flex: "none", border: "none", background: "transparent", color: "#ffffff", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }
+                style: { flex: "none", border: "none", background: "transparent", color: THEME.textSecondary, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }
             }, "×")
             );
         }
@@ -705,7 +732,7 @@ window.__ModuleLoader__.load({
 
             return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
                 h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("title")),
-                h("p", { style: { margin: "0 0 18px", fontSize: 13, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, t("description")),
+                h("p", { style: { margin: "0 0 18px", fontSize: 13, color: THEME.textSecondary } }, t("description")),
                 h("div", {
                     style: {
                         ...cardBase,
@@ -721,20 +748,20 @@ window.__ModuleLoader__.load({
                 },
                 h("div", { style: { flex: "1 1 260px", minWidth: 0 } },
                     h("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 4 } }, t("emptyCleanupTitle")),
-                    h("div", { style: { fontSize: 12, lineHeight: 1.5, color: token("--dsw-alias-label-secondary", "#a1a1aa") } }, t("emptyCleanupDescription"))
+                    h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("emptyCleanupDescription"))
                 ),
                 h(EmptySessionCleanup, { t, getWorkspaceRegistry })
                 ),
                 state.phase === "loading" ? h("div", { style: { fontSize: 13 } }, t("loading")) : null,
                 state.phase === "unavailable"
-                    ? h("div", { style: { fontSize: 13, color: "#e8a33d", marginBottom: 8 } },
+                    ? h("div", { style: { fontSize: 13, color: THEME.warnText, marginBottom: 8 } },
                         t("unavailable"),
                         state.available.length > 0
-                            ? h("div", { style: { marginTop: 4, fontSize: 12, color: token("--dsw-alias-label-tertiary", "#7c7c85") } },
+                            ? h("div", { style: { marginTop: 4, fontSize: 12, color: THEME.textSecondary } },
                                 `${t("registered")}${state.available.join(", ")}`)
                             : null)
                     : null,
-                state.error ? h("div", { style: { fontSize: 13, color: "#ef5f5f", marginBottom: 12 } }, `${state.phase === "error" ? t("loadFailed") : t("saveFailed")}${state.error}`) : null,
+                state.error ? h("div", { style: { fontSize: 13, color: THEME.dangerText, marginBottom: 12 } }, `${state.phase === "error" ? t("loadFailed") : t("saveFailed")}${state.error}`) : null,
                 state.phase === "ready" || state.phase === "unavailable"
                     ? h("div", { style: { ...cardBase, padding: "16px 18px", boxShadow: "none" } },
                         h("label", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16, cursor: "pointer" } },
@@ -768,11 +795,11 @@ window.__ModuleLoader__.load({
                         ),
                     )
                     : null,
-                h("div", { style: { ...cardBase, marginTop: 16, padding: "16px 18px", boxShadow: "none", background: token("--dsw-alias-bg-sunken", "#121215") } },
-                    h("div", { style: { fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: token("--dsw-alias-label-tertiary", "#7c7c85"), marginBottom: 8 } }, t("formulaTitle")),
+                h("div", { style: { ...cardBase, marginTop: 16, padding: "16px 18px", boxShadow: "none", background: THEME.sunken } },
+                    h("div", { style: { fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: THEME.textSecondary, marginBottom: 8 } }, t("formulaTitle")),
                     h("div", { style: { fontSize: 14, lineHeight: 1.7, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } },
                         h("div", null, t("formula")),
-                        h("div", { style: { marginTop: 6, color: token("--dsw-alias-label-secondary", "#a1a1aa") } },
+                        h("div", { style: { marginTop: 6, color: THEME.textSecondary } },
                             `= (1 + ${draft.providerRetryMaxRetries}) × (1 + ${draft.maxAttempts}) = ${total}`),
                         h("div", { style: { marginTop: 6, fontSize: 20, fontWeight: 700 } }, `${total} ${t("requestUnit")}`)
                     )
@@ -781,7 +808,7 @@ window.__ModuleLoader__.load({
                     h("button", { type: "button", onClick: save, disabled: busy || numericIncomplete || state.phase !== "ready", style: { ...buttonStyle, opacity: busy || numericIncomplete || state.phase !== "ready" ? 0.55 : 1 } },
                         busy ? t("saving") : t("save")),
                     h("button", { type: "button", onClick: load, style: ghostButtonStyle }, t("reload")),
-                    saveState === "saved" ? h("span", { style: { fontSize: 12, color: "#4fbf7a" } }, t("saved")) : null
+                    saveState === "saved" ? h("span", { style: { fontSize: 12, color: THEME.successText } }, t("saved")) : null
                 )
             );
         }

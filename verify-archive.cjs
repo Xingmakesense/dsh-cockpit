@@ -116,6 +116,25 @@ async function main() {
         rejected = true;
     }
     assert(rejected, "more than 20 sessions per search must be rejected");
+    const { emptySessionDiagnosticDetails } = await import("./vendor/archive-manager/lib/empty-session-policy.js");
+    const detail = emptySessionDiagnosticDetails({
+        header: { id: "ghost-1", createdAt: 1234, cwd: "<workspace>" },
+        summary: { blank: true, running: false },
+        summariesAvailable: true,
+        archived: false,
+        live: false
+    });
+    assert(detail.hasSummary && detail.blank && detail.createdAt === 1234,
+        "diagnostics must preserve the Host summary and creation time");
+    const protectedDetail = emptySessionDiagnosticDetails({
+        header: { id: "archived-1", createdAt: 1234, cwd: "<workspace>" },
+        summary: { blank: true, running: false },
+        summariesAvailable: true,
+        archived: true,
+        live: false
+    });
+    assert(protectedDetail.archived && protectedDetail.hasSummary,
+        "archived blank Sessions must retain their registry and summary state");
     assert(lib.previewInputSchema.parse({ sessionId: "s1" }).query === "", "preview query must default to empty");
 
     // --- empty-session HTTP route ---------------------------------------------
@@ -124,7 +143,14 @@ async function main() {
     const route = cleanupRoute({
         workspaceRegistry: {
             async previewEmptySessions() {
-                return { items: [{ sessionId: "empty-1" }], skipped: [{ sessionId: "kept-1", reason: "active" }] };
+                return {
+                    items: [{ sessionId: "empty-1", archived: false }],
+                    skipped: [{ sessionId: "kept-1", reason: "active" }],
+                    diagnostics: [
+                        { sessionId: "empty-1", archived: false, empty: true, reason: "empty" },
+                        { sessionId: "kept-1", archived: false, empty: false, reason: "active" }
+                    ]
+                };
             },
             async deleteEmptySessions(input) {
                 cleanupCalls.push(input);
@@ -137,6 +163,8 @@ async function main() {
     const previewBody = await previewResponse.json();
     assert(previewResponse.status === 200 && previewBody.ok === true && previewBody.value.items[0].sessionId === "empty-1",
         "cleanup GET must preview candidates through the archive host");
+    assert(previewBody.value.diagnostics.length === 2 && previewBody.value.diagnostics[1].reason === "active",
+        "read-only diagnostics must include non-candidates and their protection reason");
     const deleteResponse = await route.fetch(new Request("http://localhost/api/cockpit/empty-sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },

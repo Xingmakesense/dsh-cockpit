@@ -12,7 +12,7 @@ import { trackTombstone } from "./tombstone.js";
 import { defineDomain } from "@deepseek-ai/dsh-storage-domain";
 import { favoriteInputSchema, favoriteStateSchema, favoriteInvocations } from "./archive-organizer.js";
 import { purgeSessionFromEveryCacheDomain } from "./projcache.js";
-import { emptySessionPrescreen, hasOnlyInitializationEvents } from "./empty-session-policy.js";
+import { emptySessionPrescreen, hasOnlyInitializationEvents, emptySessionDiagnosticDetails } from "./empty-session-policy.js";
 const favoriteDomainSpec = defineDomain({
   name: "archive_manager_favorites",
   version: 1,
@@ -172,12 +172,15 @@ const deletedBatchSchema = {
 const emptyPreviewSchema = {
   parse(input) {
     const value = record(input);
-    if (!value || !Array.isArray(value.items) || !Array.isArray(value.skipped)) throw new TypeError("empty-session preview is invalid");
+    if (!value || !Array.isArray(value.items) || !Array.isArray(value.skipped) || !Array.isArray(value.diagnostics)) throw new TypeError("empty-session preview is invalid");
     for (const item of value.items) {
       if (!item || typeof item.sessionId !== "string" || typeof item.archived !== "boolean") throw new TypeError("empty-session candidate is invalid");
     }
     for (const item of value.skipped) {
       if (!item || typeof item.sessionId !== "string" || typeof item.reason !== "string" || item.reason.length > 200) throw new TypeError("empty-session skip reason is invalid");
+    }
+    for (const item of value.diagnostics) {
+      if (!item || typeof item.sessionId !== "string" || typeof item.archived !== "boolean" || typeof item.empty !== "boolean" || typeof item.reason !== "string" || item.reason.length > 200) throw new TypeError("empty-session diagnostic is invalid");
     }
     return value;
   }
@@ -751,50 +754,67 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
       return null;
     }
   }
-  async classifyEmptySession(header, summaries) {
+  async classifyEmptySession(header, summaries, { flushLive = true } = {}) {
     const sessionId = header.id;
     const archived = this.requireState().archivedSessionIds.includes(sessionId);
+    const sessions = this.ctx.get("sessions");
+    const liveSession = sessions?.get(sessionId);
+    const live = Boolean(liveSession || this.ctx.get("agents")?.get(sessionId));
+    const summary = summaries?.get(sessionId);
+    const details = emptySessionDiagnosticDetails({ header, summary, summariesAvailable: summaries !== null, archived, live });
+    const verdict = (empty, reason, extra = {}) => ({ empty, reason, archived, ...details, ...extra });
     try {
-      const sessions = this.ctx.get("sessions");
-      const liveSession = sessions?.get(sessionId);
-      const live = Boolean(liveSession || this.ctx.get("agents")?.get(sessionId));
-      const summary = summaries?.get(sessionId);
       const prescreen = emptySessionPrescreen({ live, header, summary });
-      if (prescreen !== null) return { empty: false, reason: prescreen, archived };
-      // The stored log is authoritative. Flush an attached Session first so a
-      // prompt whose events are still in the persistence buffer cannot be
-      // mistaken for content-free.
-      if (liveSession !== void 0 && typeof sessions?.flush === "function") await sessions.flush(liveSession);
-      const persistence = this.ctx.get("sessionPersistence");
-      if (!persistence) return { empty: false, reason: "read-failed", archived };
-      const stored = await this.readStoredProjectionSource(persistence, sessionId);
-      if ((stored.inheritedEventCount ?? 0) > 0) return { empty: false, reason: "lineage", archived };
+      if (prescreen !== null) return verdict(false, prescreen);
+      // Deletion still flushes a live Session before rechecking it. A diagnostic
+      // preview instead reads its in-memory snapshot and never persists a buffer.
+      if (flushLive && liveSession !== void 0 && typeof sessions?.flush === "function") await sessions.flush(liveSession);
+      let stored;
+      if (!flushLive && liveSession !== void 0 && typeof liveSession.snapshotEvents === "function") {
+        stored = { meta: liveSession.header, inheritedEventCount: liveSession.inheritedEventCount, events: liveSession.snapshotEvents() };
+      } else {
+        const persistence = this.ctx.get("sessionPersistence");
+        if (!persistence) return verdict(false, "read-failed");
+        stored = await this.readStoredProjectionSource(persistence, sessionId);
+      }
+      const eventCount = Array.isArray(stored.events) ? stored.events.length : null;
+      if ((stored.inheritedEventCount ?? 0) > 0) return verdict(false, "lineage", { eventCount });
       const events = stored.events ?? [];
       // Only known configuration/initialization events are allowed. Any user,
       // assistant, tool, request, task, title, or unknown event preserves the row.
-      if (!hasOnlyInitializationEvents(events)) return { empty: false, reason: "content", archived };
+      if (!hasOnlyInitializationEvents(events)) return verdict(false, "content", { eventCount });
       const activity = await this.sessionActivity(sessionId);
-      if (activity.length > 0) return { empty: false, reason: "activity", archived };
-      return { empty: true, archived };
-    } catch {
-      return { empty: false, reason: "read-failed", archived };
+      if (activity.length > 0) return verdict(false, "activity", { eventCount, activityCount: activity.length });
+      return verdict(true, "empty", { eventCount, activityCount: 0 });
+    } catch (error) {
+      return verdict(false, "read-failed", { error: errorMessage(error).slice(0, 400) });
     }
   }
-  /** Read-only preview; deletion re-runs this classification after confirmation. */
+  /** Read-only inventory of every persisted log, including non-empty Sessions. */
   async previewEmptySessions() {
     const summaries = await this.emptySessionSummaries();
-    const items = [], skipped = [];
+    const items = [], skipped = [], diagnostics = [];
     for (const header of await this.listStoredHeaders()) {
-      const verdict = await this.classifyEmptySession(header, summaries);
+      const verdict = await this.classifyEmptySession(header, summaries, { flushLive: false });
+      diagnostics.push({ sessionId: header.id, ...verdict });
       if (verdict.empty) items.push({ sessionId: header.id, archived: verdict.archived });
       else skipped.push({ sessionId: header.id, reason: verdict.reason });
     }
-    return { items, skipped };
+    return { items, skipped, diagnostics };
   }
   async deleteEmptySessions(input) {
     const { sessionIds: requestedSessionIds } = emptyDeleteInputSchema.parse(input);
     return this.enqueueOperation(async () => {
-      const preview = await this.previewEmptySessions();
+      const preview = await (async () => {
+        const summaries = await this.emptySessionSummaries();
+        const items = [], skipped = [];
+        for (const header of await this.listStoredHeaders()) {
+          const verdict = await this.classifyEmptySession(header, summaries);
+          if (verdict.empty) items.push({ sessionId: header.id, archived: verdict.archived });
+          else skipped.push({ sessionId: header.id, reason: verdict.reason });
+        }
+        return { items, skipped };
+      })();
       const eligible = new Set(preview.items.map((item) => item.sessionId));
       const deletedSessionIds = [], skippedSessionIds = [], failures = [];
       for (const sessionId of requestedSessionIds) {

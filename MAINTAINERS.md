@@ -28,7 +28,7 @@
 7. **续轮触发与去重**：`agent/error` 是快速路径，`turn/end reason.kind = "error"` 是持久化兜底；同一 Turn 只武装一次，只有 `agent.followup()` 成功才计次数。
 8. **提示与下载事件**：统一复用已验证的 `api-session/error` relay；续轮以 `【自动续轮` 开头，下载以 `【下载】` 开头。Client 必须分别解析，不能让下载 JSON 被当成错误提示。
 9. **下载观测**：只能在 `connection/request` 的响应包装中统计字节，必须调用原 `next()` 并保持原响应内容、背压和保存流程；无 `Content-Length` 时不得伪造百分比。
-10. **空对话清理**：`previewEmptySessions` 只读，`deleteEmptySessions` 在确认后重新校验；当前/活动、fork、subagent、真实内容、未知事件和读取失败的会话一律保留。
+10. **会话差异诊断**：`previewEmptySessions` 返回全部持久化日志的只读诊断，当前/活动、fork、subagent、真实内容、未知事件和读取失败的会话必须标明保护原因。诊断遇到实时 Session 时只读内存快照；删除复核必须走独立的 flush-and-revalidate 路径，不能复用无刷新的诊断路径。
 11. **缓存性能**：存活会话集合每次迁移/清扫最多读取一次 `sessionPersistence.list()`；兼容官方缓存记录每次迁移只读取一次；孤儿行在各自域内批量删除，不得按候选逐个 `stat()` 或重复开关全部域。
 12. **内层重试覆盖**：`providerRetryMaxRetries` 在 `agent/request-error` 中生成新的 `ResolvedNormalRetryPolicy` 并继续 `next()`，覆盖所有模型的系统默认上限；不得只修改预算公式，也不得修改其他插件的 profile 配置。
 

@@ -124,7 +124,13 @@ async function main() {
     const route = cleanupRoute({
         workspaceRegistry: {
             async previewEmptySessions() {
-                return { items: [{ sessionId: "empty-1" }], skipped: [{ sessionId: "kept-1", reason: "active" }] };
+                return {
+                    items: [
+                        { sessionId: "empty-1", kind: "empty" },
+                        { sessionId: "ghost-1", kind: "ghost" }
+                    ],
+                    skipped: [{ sessionId: "kept-1", reason: "referenced" }]
+                };
             },
             async deleteEmptySessions(input) {
                 cleanupCalls.push(input);
@@ -137,6 +143,8 @@ async function main() {
     const previewBody = await previewResponse.json();
     assert(previewResponse.status === 200 && previewBody.ok === true && previewBody.value.items[0].sessionId === "empty-1",
         "cleanup GET must preview candidates through the archive host");
+    assert(previewBody.value.items[1].kind === "ghost" && previewBody.value.skipped[0].reason === "referenced",
+        "preview must keep ghost candidates and their skip reasons");
     const deleteResponse = await route.fetch(new Request("http://localhost/api/cockpit/empty-sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -52,11 +52,11 @@ window.__ModuleLoader__.load({
                 attempt: "第 {attempt}/{max} 次",
                 registered: "已注册：",
                 requestUnit: "次",
-                emptyCleanup: "清除空对话",
+                emptyCleanup: "清理",
                 emptyCleanupTitle: "空对话清理",
-                emptyCleanupDescription: "预览并永久删除没有真实内容的会话；删除前会显示候选数量并要求确认。",
-                emptyNone: "没有可清理的空对话",
-                emptyConfirm: "发现 {count} 个空对话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
+                emptyCleanupDescription: "预览并永久删除空对话，以及没有被任何父会话引用的子会话（幽灵会话）；删除前会显示候选数量并要求确认。",
+                emptyNone: "没有需要清理的会话",
+                emptyConfirm: "发现 {empty} 个空对话、{ghost} 个幽灵会话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
                 emptyDeleteConfirm: "确认删除",
                 emptyDeleteResult: "已删除 {deleted}，跳过 {skipped}，失败 {failed}",
                 emptyFailed: "操作失败：",
@@ -89,11 +89,11 @@ window.__ModuleLoader__.load({
                 attempt: "Attempt {attempt}/{max}",
                 registered: "Registered: ",
                 requestUnit: "requests",
-                emptyCleanup: "Clear empty chats",
+                emptyCleanup: "Clean",
                 emptyCleanupTitle: "Empty chat cleanup",
-                emptyCleanupDescription: "Preview and permanently delete sessions without real content. The candidate count is shown before you confirm.",
-                emptyNone: "No empty chats to clear",
-                emptyConfirm: "{count} empty chats will be permanently deleted ({skipped} skipped). This cannot be undone.",
+                emptyCleanupDescription: "Preview and permanently delete empty chats and subagent sessions no parent references (ghost sessions). The candidate count is shown before you confirm.",
+                emptyNone: "Nothing to clean up",
+                emptyConfirm: "{empty} empty chats and {ghost} ghost sessions will be permanently deleted ({skipped} skipped). This cannot be undone.",
                 emptyDeleteConfirm: "Delete permanently",
                 emptyDeleteResult: "Deleted {deleted}, skipped {skipped}, failed {failed}",
                 emptyFailed: "Operation failed: ",
@@ -400,24 +400,27 @@ window.__ModuleLoader__.load({
                 }
             };
             const preview = async () => {
-                setState({ phase: "loading", candidates: [], skipped: 0, error: "", result: null });
+                setState({ phase: "loading", candidates: [], skipped: 0, ghostCount: 0, emptyCount: 0, error: "", result: null });
                 try {
                     const value = await call("previewEmptySessions");
-                    setState({ phase: value.items.length > 0 ? "confirm" : "empty", candidates: value.items, skipped: value.skipped.length, error: "", result: null });
+                    const candidates = value.items;
+                    const ghostCount = candidates.filter((item) => item.kind === "ghost").length;
+                    const emptyCount = candidates.length - ghostCount;
+                    setState({ phase: candidates.length > 0 ? "confirm" : "empty", candidates, skipped: value.skipped.length, ghostCount, emptyCount, error: "", result: null });
                 } catch (error) {
-                    setState({ phase: "error", candidates: [], skipped: 0, error: error instanceof Error ? error.message : String(error), result: null });
+                    setState({ phase: "error", candidates: [], skipped: 0, ghostCount: 0, emptyCount: 0, error: error instanceof Error ? error.message : String(error), result: null });
                 }
             };
             const remove = async () => {
                 setState((current) => ({ ...current, phase: "deleting", error: "" }));
                 try {
                     const result = await call("deleteEmptySessions", { sessionIds: state.candidates.map((item) => item.sessionId) });
-                    setState({ phase: "done", candidates: [], skipped: 0, error: "", result });
+                    setState({ phase: "done", candidates: [], skipped: 0, ghostCount: 0, emptyCount: 0, error: "", result });
                 } catch (error) {
                     setState((current) => ({ ...current, phase: "error", error: error instanceof Error ? error.message : String(error) }));
                 }
             };
-            const close = () => setState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
+            const close = () => setState({ phase: "idle", candidates: [], skipped: 0, ghostCount: 0, emptyCount: 0, error: "", result: null });
             const busy = state.phase === "loading" || state.phase === "deleting";
             return h("span", { style: { position: "relative", display: "inline-flex" } },
                 h("button", {
@@ -447,7 +450,7 @@ window.__ModuleLoader__.load({
                 },
                 state.phase === "loading" ? h("span", null, "…") : null,
                 state.phase === "empty" ? h("span", null, t("emptyNone")) : null,
-                state.phase === "confirm" ? h("span", null, t("emptyConfirm", { count: state.candidates.length, skipped: state.skipped })) : null,
+                state.phase === "confirm" ? h("span", null, t("emptyConfirm", { empty: state.emptyCount, ghost: state.ghostCount, skipped: state.skipped })) : null,
                 state.phase === "deleting" ? h("span", null, "…") : null,
                 state.phase === "done" ? h("span", null, t("emptyDeleteResult", {
                     deleted: state.result.deletedSessionIds.length,

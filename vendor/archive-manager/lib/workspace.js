@@ -175,6 +175,7 @@ const emptyPreviewSchema = {
     if (!value || !Array.isArray(value.items) || !Array.isArray(value.skipped)) throw new TypeError("empty-session preview is invalid");
     for (const item of value.items) {
       if (!item || typeof item.sessionId !== "string" || typeof item.archived !== "boolean") throw new TypeError("empty-session candidate is invalid");
+      if (item.kind !== void 0 && item.kind !== "empty" && item.kind !== "ghost") throw new TypeError("empty-session candidate kind is invalid");
     }
     for (const item of value.skipped) {
       if (!item || typeof item.sessionId !== "string" || typeof item.reason !== "string" || item.reason.length > 200) throw new TypeError("empty-session skip reason is invalid");
@@ -751,6 +752,48 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
       return null;
     }
   }
+  /**
+   * Child ids every stored log still publishes in its `subagent/catalog`.
+   * A subagent Session is "referenced" when any catalog names it. When any log
+   * cannot be read the whole ghost sweep is abandoned, so an unreadable parent
+   * can never make its children look unreferenced.
+   */
+  async referencedSubagentIds(headers) {
+    const referenced = new Set();
+    for (const header of headers) {
+      let events;
+      try {
+        events = await this.readConversationEvents(header.id);
+      } catch {
+        return null;
+      }
+      for (const event of events) {
+        if (event?.type !== "subagent/catalog") continue;
+        const data = event.data ?? {};
+        if (data.removed === true || data.mode === "removed") continue;
+        if (typeof data.childId === "string") referenced.add(data.childId);
+      }
+    }
+    return referenced;
+  }
+  /** An unarchived subagent child that no parent catalog references any more. */
+  async classifyGhostSession(header, summaries, referenced) {
+    const sessionId = header.id;
+    const archived = this.requireState().archivedSessionIds.includes(sessionId);
+    if (header.origin !== "subagent" || header.isSeeded) return { ghost: false, reason: "not-subagent", archived };
+    if (archived) return { ghost: false, reason: "archived", archived };
+    if (referenced.has(sessionId)) return { ghost: false, reason: "referenced", archived };
+    const sessions = this.ctx.get("sessions");
+    const liveSession = sessions?.get(sessionId);
+    if (liveSession !== void 0 || this.ctx.get("agents")?.get(sessionId)) {
+      return { ghost: false, reason: "live", archived };
+    }
+    const summary = summaries?.get(sessionId);
+    if (summary?.running === true) return { ghost: false, reason: "running", archived };
+    const activity = await this.sessionActivity(sessionId);
+    if (activity.length > 0) return { ghost: false, reason: "activity", archived };
+    return { ghost: true, reason: "ghost", archived };
+  }
   async classifyEmptySession(header, summaries) {
     const sessionId = header.id;
     const archived = this.requireState().archivedSessionIds.includes(sessionId);
@@ -780,13 +823,26 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
       return { empty: false, reason: "read-failed", archived };
     }
   }
-  /** Read-only preview; deletion re-runs this classification after confirmation. */
+  /** Read-only preview of empty Sessions and unreferenced subagent children. */
   async previewEmptySessions() {
     const summaries = await this.emptySessionSummaries();
+    const headers = await this.listStoredHeaders();
+    const referenced = await this.referencedSubagentIds(headers);
     const items = [], skipped = [];
-    for (const header of await this.listStoredHeaders()) {
+    for (const header of headers) {
+      const archived = this.requireState().archivedSessionIds.includes(header.id);
+      if (header.origin === "subagent") {
+        if (referenced === null) {
+          skipped.push({ sessionId: header.id, reason: "reference-unreadable" });
+          continue;
+        }
+        const verdict = await this.classifyGhostSession(header, summaries, referenced);
+        if (verdict.ghost) items.push({ sessionId: header.id, archived: verdict.archived, kind: "ghost" });
+        else skipped.push({ sessionId: header.id, reason: verdict.reason });
+        continue;
+      }
       const verdict = await this.classifyEmptySession(header, summaries);
-      if (verdict.empty) items.push({ sessionId: header.id, archived: verdict.archived });
+      if (verdict.empty) items.push({ sessionId: header.id, archived: verdict.archived, kind: "empty" });
       else skipped.push({ sessionId: header.id, reason: verdict.reason });
     }
     return { items, skipped };

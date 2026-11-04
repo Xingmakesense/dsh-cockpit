@@ -153,6 +153,8 @@ function checkDeletionSemantics() {
     const workspace = read("./vendor/archive-manager/lib/workspace.js");
     assert(!workspace.includes("请先归档会话，再执行永久删除"), "single-session deletion must allow archived and unarchived targets");
     assert(workspace.includes("purgeSessionRegistryTraces"), "all deletion paths must share registry-trace cleanup");
+    assert(workspace.includes("collectSubagentDescendants"), "deleting a parent must enumerate every subagent descendant");
+    assert(workspace.includes("cascadedSessionIds"), "deletion results must report cascaded child sessions");
 }
 
 function checkProjectionMigrationSource() {

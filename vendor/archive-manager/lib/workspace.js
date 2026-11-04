@@ -852,7 +852,7 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
     return this.enqueueOperation(async () => {
       const preview = await this.previewEmptySessions();
       const eligible = new Set(preview.items.map((item) => item.sessionId));
-      const deletedSessionIds = [], skippedSessionIds = [], failures = [];
+      const deletedSessionIds = [], skippedSessionIds = [], cascadedSessionIds = [], failures = [];
       for (const sessionId of requestedSessionIds) {
         if (!eligible.has(sessionId)) {
           skippedSessionIds.push(sessionId);
@@ -861,12 +861,17 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
         try {
           const result = await this.deleteSessionCore(sessionId);
           if (result?.skipped && !this.deletedSessionIds.has(sessionId)) skippedSessionIds.push(sessionId);
-          else deletedSessionIds.push(sessionId);
+          else {
+            deletedSessionIds.push(sessionId);
+            for (const childId of result?.cascadedSessionIds ?? []) {
+              if (!cascadedSessionIds.includes(childId)) cascadedSessionIds.push(childId);
+            }
+          }
         } catch (error) {
           failures.push({ sessionId, message: deletionFailureMessage(error) });
         }
       }
-      const summary = { requestedSessionIds, deletedSessionIds, skippedSessionIds, failures };
+      const summary = { requestedSessionIds, deletedSessionIds, skippedSessionIds, cascadedSessionIds, failures };
       this.publishDeletionAudit({ action: "delete-empty-sessions", ...summary });
       return summary;
     });
@@ -1200,14 +1205,14 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
     } else if (sessions !== void 0)
       await this.publishColdSessionRemoval(sessionId, sessions);
     await purgeSessionFromEveryCacheDomain(this.ctx, sessionId);
-    await this.deleteDescendants(sessionId, descendantHeaders);
+    const cascadedSessionIds = await this.deleteDescendants(sessionId, descendantHeaders);
     await this.removeTranscriptDirectory(sessionId);
     await this.purgeSessionRegistryTraces(sessionId, { includeProjectionCache: false });
     this.forgetIndexedSession(sessionId);
     if (deletedHeader !== void 0)
       this.deletedIdentities.set(sessionId, headerIdentity(deletedHeader));
     this.publishDeletedSession(sessionId);
-    return { deleted: true };
+    return { deleted: true, cascadedSessionIds };
   }
   /** 删除完成后通知全部客户端；新版不再通过伪造冷会话生命周期触发通知。 */
   publishDeletedSession(sessionId) {
@@ -1444,27 +1449,40 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
     }
     return facts;
   }
-  /** 尽力而为的级联删除：删除 `sessionId` 的 SUBAGENT 子会话。
-   * 仅头部标记 `origin: "subagent"` 的会话参与：单凭 `parentSession` 有歧义
-   *（fork 分支也携带它），而 fork 分支是独立的用户会话，绝不能被级联删除。 */
+  /** All SUBAGENT descendants of `sessionId`, including grandchildren and deeper.
+   * Fork branches are excluded: they carry `parentSession` but are independent
+   * user Sessions. Live and stored headers are merged so a running child is not missed. */
+  async collectSubagentDescendants(sessionId, storedHeaders) {
+    const headers = storedHeaders ?? await this.listStoredHeaders();
+    const live = this.ctx.get("sessions")?.list?.() ?? [];
+    const childrenByParent = new Map();
+    const add = (header) => {
+      if (!header || header.origin !== "subagent" || header.isSeeded === true) return;
+      if (typeof header.parentSession !== "string") return;
+      const list = childrenByParent.get(header.parentSession) ?? [];
+      if (!list.some((item) => item.id === header.id)) list.push(header);
+      childrenByParent.set(header.parentSession, list);
+    };
+    for (const header of headers) add(header);
+    for (const session of live) add(session?.header);
+    const descendants = [];
+    const seen = new Set([sessionId]);
+    const queue = [sessionId];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const header of childrenByParent.get(current) ?? []) {
+        if (seen.has(header.id)) continue;
+        seen.add(header.id);
+        descendants.push(header.id);
+        queue.push(header.id);
+      }
+    }
+    return descendants;
+  }
+  /** Cascade every SUBAGENT descendant before the parent log disappears. */
   async deleteDescendants(sessionId, storedHeaders) {
     try {
-      const descendants = [];
-      const collected = /* @__PURE__ */ new Set();
-      const sessions = this.ctx.get("sessions");
-      if (sessions !== void 0)
-        for (const session of sessions.list()) {
-          if (session.header.parentSession === sessionId && session.header.origin === "subagent") {
-            descendants.push(session.id);
-            collected.add(session.id);
-          }
-        }
-      for (const header of storedHeaders ?? await this.listStoredHeaders()) {
-        if (header.parentSession === sessionId && header.origin === "subagent" && !collected.has(header.id)) {
-          descendants.push(header.id);
-          collected.add(header.id);
-        }
-      }
+      const descendants = await this.collectSubagentDescendants(sessionId, storedHeaders);
       for (const childId of descendants) {
         try {
           if (!await this.sessionKnown(childId)) continue;
@@ -1475,10 +1493,12 @@ var ArchiveWorkspaceRegistry = class extends WorkspaceRegistry {
           );
         }
       }
+      return descendants;
     } catch (error) {
       this.ctx.logger.warn(
         `archive-manager: descendant enumeration for deleted session "${sessionId}" failed: ${String(error)}`
       );
+      return [];
     }
   }
   /** 尽力而为的 spill 清理：移除该会话作用域的 spill 目录。 */

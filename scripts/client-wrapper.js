@@ -794,7 +794,7 @@ window.__ModuleLoader__.load({
             };
         }
 
-        function SettingsPage({ t, settings, getWorkspaceRegistry }) {
+        function SettingsPage({ t, settings, getWorkspaceRegistry, getDiagnosticServices, locale }) {
             const [state, setState] = React.useState({ phase: "loading", view: null, draft: null, error: null, available: [] });
             const [saveState, setSaveState] = React.useState("idle");
 

@@ -1149,46 +1149,15 @@ window.__ModuleLoader__.load({
                 attempt: "第 {attempt}/{max} 次",
                 registered: "已注册：",
                 requestUnit: "次",
-                emptyCleanup: "查看会话差异",
-                emptyCleanupTitle: "会话差异诊断",
-                emptyCleanupDescription: "只读列出磁盘日志、界面可见性和归档状态，不删除任何会话。",
-                emptyNone: "没有发现磁盘会话日志",
-                emptySummary: "共 {total} 条：未归档空白 {empty}，已归档空白 {archived}，其他受保护 {protected}。",
-                emptyGhosts: "未归档、非当前的空白日志",
-                emptyArchived: "已归档的空白会话",
-                emptyProtected: "受保护或不可判定的会话",
-                emptyReadonly: "以下均为只读诊断，不会删除或修改会话。",
-                emptyCreated: "创建：",
-                emptyEvents: "事件：",
-                emptyWorkspace: "工作区：",
-                emptyNoWorkspace: "未记录工作区路径",
-                emptyUnknownTime: "时间未知",
-                emptyFlags: "状态：",
-                emptyCurrent: "当前打开",
-                emptyCurrentUnknown: "当前状态未知",
-                emptyLive: "已挂载",
-                emptyRunning: "运行中",
-                emptyArchivedFlag: "已归档",
-                emptyNoSummary: "无 Host 摘要",
-                emptyHidden: "界面可见性：",
-                emptyVisible: "符合当前显示条件",
-                "emptyReason.empty": "只有初始化事件",
-                "emptyReason.content": "含真实内容或未知事件",
-                "emptyReason.activity": "存在后台活动",
-                "emptyReason.lineage": "fork、subagent 或继承日志",
-                "emptyReason.live": "正在运行",
-                "emptyReason.not-blank-summary": "摘要显示非空或运行中",
-                "emptyReason.read-failed": "日志读取失败",
-                "emptyReason.summary-missing": "没有 Host 摘要",
-                "emptyReason.subagent": "子代理会话",
-                "emptyReason.archived": "已归档且当前筛选不显示",
-                "emptyReason.archived-filter": "当前筛选只显示已归档会话",
-                "emptyReason.current": "当前打开的空会话",
-                "emptyReason.blank": "非当前空会话，被主界面隐藏",
-                "emptyReason.workspace-membership": "未通过工作区成员筛选",
-                "emptyReason.visible": "符合当前显示条件",
+                emptyCleanup: "清除空对话",
+                emptyCleanupTitle: "空对话清理",
+                emptyCleanupDescription: "预览并永久删除没有真实内容的会话；删除前会显示候选数量并要求确认。",
+                emptyNone: "没有可清理的空对话",
+                emptyConfirm: "发现 {count} 个空对话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
+                emptyDeleteConfirm: "确认删除",
+                emptyDeleteResult: "已删除 {deleted}，跳过 {skipped}，失败 {failed}",
                 emptyFailed: "操作失败：",
-                cancel: "关闭",
+                cancel: "取消",
             },
             en: {
                 tab: "Auto-continue",
@@ -1217,46 +1186,15 @@ window.__ModuleLoader__.load({
                 attempt: "Attempt {attempt}/{max}",
                 registered: "Registered: ",
                 requestUnit: "requests",
-                emptyCleanup: "Inspect session differences",
-                emptyCleanupTitle: "Session difference diagnostics",
-                emptyCleanupDescription: "Read-only inventory of stored logs, UI visibility and archive state. Nothing is deleted.",
-                emptyNone: "No stored session logs found",
-                emptySummary: "{total} logs: {empty} unarchived blank, {archived} archived blank, {protected} protected or other.",
-                emptyGhosts: "Unarchived, non-current blank logs",
-                emptyArchived: "Archived blank sessions",
-                emptyProtected: "Protected or indeterminate sessions",
-                emptyReadonly: "Read-only diagnostics. No session is deleted or modified.",
-                emptyCreated: "Created: ",
-                emptyEvents: "Events: ",
-                emptyWorkspace: "Workspace: ",
-                emptyNoWorkspace: "No workspace path recorded",
-                emptyUnknownTime: "Unknown time",
-                emptyFlags: "State: ",
-                emptyCurrent: "Current",
-                emptyCurrentUnknown: "Current state unknown",
-                emptyLive: "Attached",
-                emptyRunning: "Running",
-                emptyArchivedFlag: "Archived",
-                emptyNoSummary: "No Host summary",
-                emptyHidden: "UI visibility: ",
-                emptyVisible: "Matches current visibility rules",
-                "emptyReason.empty": "Initialization events only",
-                "emptyReason.content": "Real content or unknown events",
-                "emptyReason.activity": "Background activity",
-                "emptyReason.lineage": "Fork, subagent or inherited log",
-                "emptyReason.live": "Running",
-                "emptyReason.not-blank-summary": "Summary is non-blank or running",
-                "emptyReason.read-failed": "Log read failed",
-                "emptyReason.summary-missing": "No Host summary",
-                "emptyReason.subagent": "Subagent session",
-                "emptyReason.archived": "Archived and excluded by the current filter",
-                "emptyReason.archived-filter": "The current filter shows archived sessions only",
-                "emptyReason.current": "Current blank session",
-                "emptyReason.blank": "Non-current blank session hidden by the main UI",
-                "emptyReason.workspace-membership": "Excluded by workspace membership",
-                "emptyReason.visible": "Matches current visibility rules",
+                emptyCleanup: "Clear empty chats",
+                emptyCleanupTitle: "Empty chat cleanup",
+                emptyCleanupDescription: "Preview and permanently delete sessions without real content. The candidate count is shown before you confirm.",
+                emptyNone: "No empty chats to clear",
+                emptyConfirm: "{count} empty chats will be permanently deleted ({skipped} skipped). This cannot be undone.",
+                emptyDeleteConfirm: "Delete permanently",
+                emptyDeleteResult: "Deleted {deleted}, skipped {skipped}, failed {failed}",
                 emptyFailed: "Operation failed: ",
-                cancel: "Close",
+                cancel: "Cancel",
             }
         };
 
@@ -1521,84 +1459,8 @@ window.__ModuleLoader__.load({
         const CLEANUP_ROUTE = "api/cockpit/empty-sessions";
         const DOWNLOAD_ROUTE = "api/cockpit/downloads";
 
-        function currentSessionFrom(services, id) {
-            const sessions = services?.sessions;
-            const list = services?.sessionList;
-            if ((list?.byId?.[id]?.retainedBy?.mainView ?? 0) > 0) return true;
-            try {
-                const source = sessions?.retainInfo?.(id);
-                const value = source && typeof source.getSnapshot === "function" ? source.getSnapshot() : source;
-                if ((value?.retainedBy?.mainView ?? 0) > 0) return true;
-            } catch {
-                // A missing optional visibility service must not fail the inventory.
-            }
-            return list?.current === id ? true : services?.currentKnown === true ? false : null;
-        }
-
-        function diagnosticVisibility(item, services) {
-            const current = currentSessionFrom(services, item.sessionId);
-            const archivedFilter = services?.archivedFilter ?? "default";
-            const showsArchived = archivedFilter === "show" || item.archived && archivedFilter === "only";
-            const hidesUnarchived = archivedFilter === "only";
-            const subagent = item.origin === "subagent";
-            const workspaceVisible = !services?.workspaceFilterKnown
-                || services.accountedSessionIds.has(item.sessionId) !== true
-                || services.visibleWorkspaceSessionIds.has(item.sessionId) === true;
-            const hiddenReason = current === true ? "current"
-                : !item.hasSummary ? "summary-missing"
-                : subagent ? "subagent"
-                : item.archived ? showsArchived ? null : "archived"
-                : hidesUnarchived ? "archived-filter"
-                : !workspaceVisible ? "workspace-membership"
-                : item.blank === true ? "blank"
-                : null;
-            const protectedReason = item.reason === "content" || item.reason === "lineage"
-                || item.reason === "activity" || item.reason === "live" || item.reason === "not-blank-summary";
-            const category = current !== false ? "protected"
-                : item.empty && !item.archived ? "ghost"
-                : item.empty && item.archived ? "archived"
-                : "protected";
-            return {
-                ...item,
-                current,
-                category,
-                hiddenReason,
-                displayVisible: hiddenReason === null && item.hasSummary,
-                classification: protectedReason ? item.reason : hiddenReason ?? item.reason
-            };
-        }
-
-        function formatDiagnosticTime(value, locale) {
-            return Number.isFinite(value) ? new Date(value).toLocaleString(locale === "en" ? "en-US" : "zh-CN") : null;
-        }
-
-        function DiagnosticRow({ item, t, locale }) {
-            const flags = [
-                item.current === true ? t("emptyCurrent") : item.current === null ? t("emptyCurrentUnknown") : null,
-                item.live ? t("emptyLive") : null,
-                item.running ? t("emptyRunning") : null,
-                item.archived ? t("emptyArchivedFlag") : null,
-                !item.hasSummary ? t("emptyNoSummary") : null
-            ].filter(Boolean).join(" · ");
-            const time = formatDiagnosticTime(item.createdAt, locale) ?? t("emptyUnknownTime");
-            const reason = t(`emptyReason.${item.classification}`) === `dsh-cockpit.emptyReason.${item.classification}`
-                ? item.classification : t(`emptyReason.${item.classification}`);
-            return h("article", { style: { padding: "9px 0", borderBottom: `1px solid ${THEME.border}`, overflowWrap: "anywhere" } },
-                h("div", { style: { color: THEME.text, fontWeight: 600 } }, reason),
-                h("div", { style: { color: THEME.textSecondary, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", userSelect: "text" } }, item.sessionId),
-                h("div", { style: { color: THEME.textSecondary } }, `${t("emptyCreated")}${time} · ${t("emptyEvents")}${item.eventCount ?? "?"}`),
-                h("div", { style: { color: THEME.textSecondary, userSelect: "text" } }, `${t("emptyWorkspace")}${item.cwd ?? t("emptyNoWorkspace")}`),
-                h("div", { style: { color: THEME.textSecondary } }, `${t("emptyFlags")}${flags || "—"}`),
-                h("div", { style: { color: THEME.textSecondary } },
-                    `${t("emptyHidden")}${item.hiddenReason ? t(`emptyReason.${item.hiddenReason}`) : t("emptyVisible")}`),
-                item.parentSessionId ? h("div", { style: { color: THEME.textSecondary, userSelect: "text" } }, `parentSession: ${item.parentSessionId}`) : null,
-                item.origin ? h("div", { style: { color: THEME.textSecondary } }, `origin: ${item.origin}`) : null,
-                item.error ? h("div", { style: { color: THEME.dangerText } }, item.error) : null
-            );
-        }
-
-        function EmptySessionCleanup({ t, getWorkspaceRegistry, getDiagnosticServices, locale }) {
-            const [state, setState] = React.useState({ phase: "idle", diagnostics: [], error: "" });
+        function EmptySessionCleanup({ t, getWorkspaceRegistry }) {
+            const [state, setState] = React.useState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
 
             const unavailable = () => Object.assign(new Error("cleanup route unavailable"), { routeUnavailable: true });
             const callRemote = async (method, input) => {
@@ -1635,31 +1497,25 @@ window.__ModuleLoader__.load({
                 }
             };
             const preview = async () => {
-                setState({ phase: "loading", diagnostics: [], error: "" });
+                setState({ phase: "loading", candidates: [], skipped: 0, error: "", result: null });
                 try {
                     const value = await call("previewEmptySessions");
-                    let services = {};
-                    try {
-                        services = getDiagnosticServices?.() ?? {};
-                    } catch {
-                        // The Host inventory remains useful if optional UI stores are absent.
-                    }
-                    const diagnostics = (value.diagnostics ?? []).map((item) => diagnosticVisibility(item, services));
-                    setState({ phase: diagnostics.length > 0 ? "ready" : "empty", diagnostics, error: "" });
+                    setState({ phase: value.items.length > 0 ? "confirm" : "empty", candidates: value.items, skipped: value.skipped.length, error: "", result: null });
                 } catch (error) {
-                    setState({ phase: "error", diagnostics: [], error: error instanceof Error ? error.message : String(error) });
+                    setState({ phase: "error", candidates: [], skipped: 0, error: error instanceof Error ? error.message : String(error), result: null });
                 }
             };
-            const close = () => setState({ phase: "idle", diagnostics: [], error: "" });
-            const busy = state.phase === "loading";
-            const groups = [
-                ["ghost", t("emptyGhosts")],
-                ["archived", t("emptyArchived")],
-                ["protected", t("emptyProtected")]
-            ].map(([category, label]) => ({ category, label, items: state.diagnostics.filter((item) => item.category === category) }));
-            const ghosts = groups[0].items.length;
-            const archived = groups[1].items.length;
-            const other = groups[2].items.length;
+            const remove = async () => {
+                setState((current) => ({ ...current, phase: "deleting", error: "" }));
+                try {
+                    const result = await call("deleteEmptySessions", { sessionIds: state.candidates.map((item) => item.sessionId) });
+                    setState({ phase: "done", candidates: [], skipped: 0, error: "", result });
+                } catch (error) {
+                    setState((current) => ({ ...current, phase: "error", error: error instanceof Error ? error.message : String(error) }));
+                }
+            };
+            const close = () => setState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
+            const busy = state.phase === "loading" || state.phase === "deleting";
             return h("span", { style: { position: "relative", display: "inline-flex" } },
                 h("button", {
                     type: "button",
@@ -1668,18 +1524,15 @@ window.__ModuleLoader__.load({
                     style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 }
                 }, busy ? "…" : t("emptyCleanup")),
                 state.phase !== "idle" ? h("span", {
-                    role: "dialog",
-                    "aria-label": t("emptyCleanupTitle"),
+                    role: state.phase === "confirm" ? "alertdialog" : "status",
                     style: {
                         position: "absolute",
                         zIndex: 100,
                         top: "calc(100% + 8px)",
                         right: 0,
-                        width: "min(680px, calc(100vw - 40px))",
-                        maxHeight: "min(720px, calc(100vh - 100px))",
-                        overflowY: "auto",
+                        width: 300,
                         boxSizing: "border-box",
-                        padding: 14,
+                        padding: 12,
                         borderRadius: 10,
                         border: `1px solid ${THEME.border}`,
                         background: THEME.surface,
@@ -1691,16 +1544,16 @@ window.__ModuleLoader__.load({
                 },
                 state.phase === "loading" ? h("span", null, "…") : null,
                 state.phase === "empty" ? h("span", null, t("emptyNone")) : null,
-                state.phase === "ready" ? h("div", null,
-                    h("p", { style: { margin: "0 0 8px", color: THEME.textSecondary } }, t("emptySummary", { total: state.diagnostics.length, empty: ghosts, archived, protected: other })),
-                    h("p", { style: { margin: "0 0 12px", color: THEME.textSecondary } }, t("emptyReadonly")),
-                    groups.filter((group) => group.items.length > 0).map((group) => h("section", { key: group.category, style: { marginBottom: 16 } },
-                        h("h3", { style: { margin: "0 0 4px", fontSize: 14, color: THEME.text } }, `${group.label}（${group.items.length}）`),
-                        group.items.map((item) => h(DiagnosticRow, { key: item.sessionId, item, t, locale }))
-                    ))
-                ) : null,
+                state.phase === "confirm" ? h("span", null, t("emptyConfirm", { count: state.candidates.length, skipped: state.skipped })) : null,
+                state.phase === "deleting" ? h("span", null, "…") : null,
+                state.phase === "done" ? h("span", null, t("emptyDeleteResult", {
+                    deleted: state.result.deletedSessionIds.length,
+                    skipped: state.result.skippedSessionIds.length,
+                    failed: state.result.failures.length
+                })) : null,
                 state.phase === "error" ? h("span", null, `${t("emptyFailed")}${state.error}`) : null,
-                h("span", { style: { display: "flex", justifyContent: "flex-end", marginTop: 10 } },
+                h("span", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 } },
+                    state.phase === "confirm" ? h("button", { type: "button", onClick: remove, style: { ...buttonStyle, padding: "5px 10px", fontSize: 12 } }, t("emptyDeleteConfirm")) : null,
                     h("button", { type: "button", onClick: close, style: { ...ghostButtonStyle, padding: "5px 10px", fontSize: 12 } }, t("cancel"))
                 )) : null
             );
@@ -1891,7 +1744,7 @@ window.__ModuleLoader__.load({
             };
         }
 
-        function SettingsPage({ t, settings, getWorkspaceRegistry, getDiagnosticServices, locale }) {
+        function SettingsPage({ t, settings, getWorkspaceRegistry }) {
             const [state, setState] = React.useState({ phase: "loading", view: null, draft: null, error: null, available: [] });
             const [saveState, setSaveState] = React.useState("idle");
 
@@ -1994,7 +1847,7 @@ window.__ModuleLoader__.load({
                     h("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 4 } }, t("emptyCleanupTitle")),
                     h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("emptyCleanupDescription"))
                 ),
-                h(EmptySessionCleanup, { t, getWorkspaceRegistry, getDiagnosticServices, locale })
+                h(EmptySessionCleanup, { t, getWorkspaceRegistry })
                 ),
                 state.phase === "loading" ? h("div", { style: { fontSize: 13 } }, t("loading")) : null,
                 state.phase === "unavailable"
@@ -2095,43 +1948,6 @@ window.__ModuleLoader__.load({
                                 return undefined;
                             }
                         };
-                        const getDiagnosticServices = () => {
-                            let sessions;
-                            let workspaces;
-                            let sessionList;
-                            let workspaceSnapshot;
-                            let currentKnown = false;
-                            try {
-                                sessions = uiCtx.get("sessions");
-                                sessionList = sessions?.list?.getSnapshot?.();
-                                currentKnown = sessionList !== void 0;
-                            } catch {
-                                // Unknown current-session state must stay protected.
-                            }
-                            try {
-                                workspaces = uiCtx.get("workspaces");
-                                workspaceSnapshot = workspaces?.list?.getSnapshot?.();
-                            } catch {
-                                // Workspace bookkeeping is optional diagnostic evidence.
-                            }
-                            let archivedFilter = "default";
-                            try {
-                                const registration = uiCtx.slots.entries("sidebar.workspaces")
-                                    .find((entry) => entry.store && typeof entry.store.create === "function");
-                                archivedFilter = registration?.store.create().getSnapshot()?.archivedFilter ?? "default";
-                            } catch {
-                                // Use DSH's default archived visibility when the view store is unavailable.
-                            }
-                            return {
-                                sessions,
-                                sessionList,
-                                archivedFilter,
-                                workspaceFilterKnown: workspaceSnapshot !== void 0,
-                                currentKnown,
-                                accountedSessionIds: new Set((workspaceSnapshot?.items ?? []).flatMap((workspace) => workspace.sessionIds ?? [])),
-                                visibleWorkspaceSessionIds: new Set((workspaceSnapshot?.items ?? []).flatMap((workspace) => workspace.sessionIds ?? []))
-                            };
-                        };
 
                         if (remote && typeof remote.$on === "function") {
                             uiCtx.effect(() => {
@@ -2168,7 +1984,7 @@ window.__ModuleLoader__.load({
                             order: 100,
                             label: () => t("tab"),
                             locale: NS,
-                            inject: () => ({ t, settings, getWorkspaceRegistry, getDiagnosticServices, locale: typeof document !== "undefined" && document.documentElement.lang.toLowerCase().startsWith("en") ? "en" : "zh" })
+                            inject: () => ({ t, settings, getWorkspaceRegistry })
                         }, SettingsPage));
 
                         try {

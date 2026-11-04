@@ -82,7 +82,7 @@ async function main() {
             mutate: async () => ({ value: {}, revision: 1 })
         },
         workspaceRegistry: {
-            previewEmptySessions: async () => ({ items: [], skipped: [], diagnostics: [] }),
+            previewEmptySessions: async () => ({ items: [], skipped: [] }),
             deleteEmptySessions: async () => ({ requestedSessionIds: [], deletedSessionIds: [], skippedSessionIds: [], failures: [] })
         },
         $on(event, handler) {
@@ -106,9 +106,6 @@ async function main() {
             bind: (ns) => (key) => `${ns}.${key}`
         },
         slots: {
-            entries() {
-                return [];
-            },
             inject(key, callback) {
                 callback();
                 return () => {};
@@ -230,7 +227,7 @@ async function main() {
     let cleanupRequest;
     globalThis.fetch = async (url, init) => {
         cleanupRequest = { url, init };
-        return { ok: true, status: 200, json: async () => ({ ok: true, value: { items: [], skipped: [], diagnostics: [] } }) };
+        return { ok: true, status: 200, json: async () => ({ ok: true, value: { items: [], skipped: [] } }) };
     };
     try {
         await cleanupButton.props.onClick();

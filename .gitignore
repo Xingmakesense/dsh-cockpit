@@ -23,6 +23,22 @@ logs/
 .env
 .env.*
 
+# credentials / keys
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
+.npmrc
+.netrc
+credentials.json
+secrets.*
+
 # editor / OS
 .vscode/
 .idea/

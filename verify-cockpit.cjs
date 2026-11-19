@@ -92,11 +92,52 @@ function checkClientArtifact() {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
     }
 
+    // DSH 0.2.2 moved the Session menu to ctx.contextMenus and declares the
+    // legacy row slot under contextMenu.content instead of sidebar.workspaces.
+    // Looking only at sidebar.workspaces silently demotes the plugin to its
+    // vendored sidebar, which loses the "delete session" row.
+    assert(
+        client.includes('slots.entries("contextMenu.content")'),
+        "session-menu detection must also accept the contextMenu.content owner (DSH 0.2.2+)"
+    );
+    const menuRows = client.split('id:"archive-manager.delete-session"').length - 1;
+    assert(menuRows === 2, `expected the delete row and its overlay to stay registered, found ${menuRows}`);
+
     // The three locale dictionaries must still carry the archive page strings.
     for (const key of ['"archives.title"', '"archives.deleteSelected"', '"archives.restore"']) {
         const count = client.split(key).length - 1;
         assert(count >= 3, `expected ${key} in zh/en/ru dictionaries, found ${count}`);
     }
+}
+
+// The Session menu moved from a sidebar child slot to ctx.contextMenus in
+// DSH 0.2.2: the legacy row slot is declared by the contextMenu.content owner.
+// The probe must accept both layouts, otherwise the plugin drops to its own
+// vendored sidebar and the "delete session" row disappears from the menu.
+function checkSessionMenuDetection() {
+    const client = read("./client.js");
+    const start = client.indexOf("function To(){");
+    const end = client.indexOf('o(To,"hostSidebarDeclaresSessionMenu")', start);
+    assert(start !== -1 && end !== -1, "the Session-menu mode probe must stay in client.js");
+    const source = client.slice(start, end);
+    assert(source.endsWith("}"), "unexpected Session-menu probe boundaries");
+    const detect = new Function("P", "Fr", `${source}; return To();`);
+    const slotName = "sidebar.workspaces.session.menu.item";
+    const host = (entries) => ({ slots: { entries: (name) => entries[name] ?? [] } });
+
+    assert(
+        detect(host({ "contextMenu.content": [{ name: "contextMenu.content", key: "session", children: { [slotName]: { kind: "list" } } }] }), slotName) === true,
+        "the probe must accept the DSH 0.2.2+ contextMenu.content owner"
+    );
+    assert(
+        detect(host({ "sidebar.workspaces": [{ name: "sidebar.workspaces", children: { [slotName]: { kind: "single" } } }] }), slotName) === true,
+        "the probe must keep accepting hosts that declare the slot under sidebar.workspaces"
+    );
+    assert(
+        detect(host({}), slotName) === false,
+        "a host that does not declare the slot must keep the vendored sidebar fallback"
+    );
+    assert(detect({ slots: {} }, slotName) === false, "a host without slots.entries must not throw");
 }
 
 function checkHostArtifact() {
@@ -169,6 +210,7 @@ async function main() {
     await checkAutoContinue();
     checkProjectionMigrationSource();
     checkClientArtifact();
+    checkSessionMenuDetection();
     checkHostArtifact();
     checkDeletionSemantics();
     checkLocaleMeta();

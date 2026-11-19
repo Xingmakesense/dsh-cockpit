@@ -31,6 +31,7 @@
 10. **空对话清理与级联删除**：`previewEmptySessions` 只读，`deleteEmptySessions` 在确认后重新校验；当前/活动、fork、真实内容、未知事件和读取失败的会话一律保留。删除任一父会话时，`deleteDescendants` 必须通过 `collectSubagentDescendants` 收集全部层级的 `origin: "subagent"` 后代并逐个删除，结果以 `cascadedSessionIds` 返回；fork 分支（`isSeeded`）不得连带删除。
 11. **缓存性能**：存活会话集合每次迁移/清扫最多读取一次 `sessionPersistence.list()`；兼容官方缓存记录每次迁移只读取一次；孤儿行在各自域内批量删除，不得按候选逐个 `stat()` 或重复开关全部域。
 12. **内层重试覆盖**：`providerRetryMaxRetries` 在 `agent/request-error` 中生成新的 `ResolvedNormalRetryPolicy` 并继续 `next()`，覆盖所有模型的系统默认上限；不得只修改预算公式，也不得修改其他插件的 profile 配置。
+13. **会话菜单宿主探测**：DSH 0.2.2 起会话右键菜单由 `ctx.contextMenus` 托管，旧的 `sidebar.workspaces.session.menu.item` 槽声明在 `contextMenu.content`（key `session`）之下。vendored 客户端的模式探测必须同时接受两种声明位置，并在 `sidebar.workspaces` 或 `contextMenu.content` 变化时重新协调；只看 `sidebar.workspaces` 会降级到自带侧栏，右键菜单里就没有「删除会话」。
 
 ## 3. 配置与默认值
 
@@ -54,7 +55,7 @@
 | `node verify-maintenance.cjs` | 审计落盘、附件引用/孤儿/宽限期、多帧与损坏 zstd、空 home 安全阀 |
 | `node verify-theme-tokens.cjs` | `client-wrapper.js` 只引用 DSH 真实存在的 `--dsw-*` 变量；浅色/深色两套主题下文字与进度条对比度达标 |
 
-发布前六项全绿，并执行 `node scripts/build-client.mjs --check` 与 `node --check host.js`。
+发布前全部检查全绿，并执行 `node scripts/build-client.mjs --check` 与 `node --check host.js`、`node --check client.js`。
 
 ### 4.1 样式只能使用 DSH 已定义的变量
 
@@ -93,7 +94,8 @@
    - 删除 `plugin-updater.js`，`index.js` 只再导出 `host-install.js`；
    - 确认弹窗加 `centered`；
    - 删除流程保留 `archive-manager/session-deleted` 审计事件；
-4. 重新生成 `client.js`；跑测试；真机验证归档页、删除、恢复。
+   - 会话菜单模式探测同时接受 `sidebar.workspaces` 与 `contextMenu.content` 两种声明位置（见 `MODIFICATIONS.md` 第 11 条）；
+4. 重新生成 `client.js`；跑测试；真机验证归档页、右键删除、恢复。
 
 ## 7. 更新 schemastery 副本
 
@@ -113,6 +115,7 @@ Config.meta.volatile === true
 | 设置页“设置服务不可用” | 先看“已注册”列表是否含 `cockpit`；不含则检查 `Config` 是否原生 volatile（`Config.listConfigs` 状态应为 `schema`）；再查 `ctx.remote.settings` 取值方式 |
 | 续轮后对话出现“继续”消息 | DSH 可能改变了 `runtime-context` 过滤行为；先跑 `verify-auto-continue.cjs`，再核对 agent-loop 的 `step()` |
 | 没有内联提示 | 检查 `emitProminentError`、`【自动续轮` 前缀及 `api-session/error` 订阅是否注册 |
+| 右键菜单没有「删除会话」 | 先确认 `client.js` 已重新生成并刷新页面；再看宿主 sidebar 是否把 `sidebar.workspaces.session.menu.item` 声明在 `contextMenu.content` 下（DSH 0.2.2+），以及控制台是否出现 `sidebar mode switch failed` |
 | 删除失败 | 看 vendored 日志中的 `cannot delete session ...`；常见原因：持久化后端无 `locate()`、路径校验失败、文件占用 |
 | 附件没被清理 | 检查会话转录是否可读、`<DSH_HOME>/sessions` 是否存在、对象是否仍在 24 小时宽限期 |
 | 安装后页面没变化 | 安装只更新文件；client 变更需刷新页面，host 变更需完全重启 |

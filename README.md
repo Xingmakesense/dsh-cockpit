@@ -1,4 +1,4 @@
-# DSH Cockpit v3.5.1
+# DSH Cockpit v3.6.0
 
 DSH Cockpit 是 DeepSeek Harness 的一体化会话工作台插件：把自动续轮、会话归档与空会话清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计、统计页和排查侧栏收进同一个包。Host 与 Client 都按功能拆分，每个模块只做一件事，彼此不互相导入。
 
@@ -23,6 +23,7 @@ DSH Cockpit 是 DeepSeek Harness 的一体化会话工作台插件：把自动�
 ### 清理临时产物按钮
 
 - 注册在 `conversation.input.dock`，位于输入框卡片上方，宽度与输入框一致，按钮左对齐。
+- 只在会话本轮输出停止后显示；会话运行中或从未运行过时整行隐藏，不占高度。
 - 点击后通过官方 Session 接口发送固定消息 `清理本项目的临时产物`，与用户手动输入并回车完全等价。
 - 按钮只负责发送，具体清理范围由当前会话的 agent 按项目约定执行。
 
@@ -170,7 +171,8 @@ node scripts/build-client.mjs --check && node --check host.js && node --check au
 6. **删除必须走同一条 registry 路径。** 归档页删除、右键删除、空会话清理共用 `workspaceRegistry` 的删除实现并发出 `archive-manager/session-deleted` 审计事件；父会话删除必须级联全部 `origin: "subagent"` 后代，fork 分支不连带。
 7. **附件清理是保守策略。** 逐 zstd 帧扫描并只保留 64 位哈希引用；任一转录、帧或目录不可读，或会话根为空时整轮放弃。
 8. **进度与提示只走同源快照。** 下载卡片与续轮提示都由 Host 的 `connection.fetch.register` 路由提供、客户端轮询；不要借用内部事件 relay，也不要在无 `Content-Length` 时伪造百分比。
-9. **按钮位置认准 dock 槽。** `conversation.input.dock` 在输入框卡片上方；`conversation.input.left/right/overlay/activity` 在卡片内侧。发送用户消息用 `prompt(..., "queue")`，不要自己构造 inbox 消息。
-10. **安装只替换文件。** 客户端变更需刷新页面，host 变更需完全重启 DSH；只刷新页面时 host 侧不会更新。
-11. **统计投影必须懒安装。** 不要在 `apply` 或 `ctx.inject` 回调里遍历 `sessionProjections.snapshot` 预热会话；第一次 `GET /api/cockpit/stats` 才注册投影并扫描所需会话，否则启动会因全量 replay 卡顿。
-12. **注入到别人子槽时不要复用 `t` 这个 prop 名。** 归档页子槽会用 owner props 调用 `renderSlot`，同名 `t` 会覆盖注入的 cockpit `locale.t`，页面就会显示 `cleanupTitle` 这类原始 key；本项目的清理块改用独立 prop `ct`。
+9. **按钮显隐跟着官方会话状态走。** 通过 shell 提供的 `sessionStatus` 钩子读 `running`：只有 `running === false` 才渲染按钮；不要自己轮询或监听内部事件判断运行状态。
+10. **按钮位置认准 dock 槽。** `conversation.input.dock` 在输入框卡片上方；`conversation.input.left/right/overlay/activity` 在卡片内侧。发送用户消息用 `prompt(..., "queue")`，不要自己构造 inbox 消息。
+11. **安装只替换文件。** 客户端变更需刷新页面，host 变更需完全重启 DSH；只刷新页面时 host 侧不会更新。
+12. **统计投影必须懒安装。** 不要在 `apply` 或 `ctx.inject` 回调里遍历 `sessionProjections.snapshot` 预热会话；第一次 `GET /api/cockpit/stats` 才注册投影并扫描所需会话，否则启动会因全量 replay 卡顿。
+13. **注入到别人子槽时不要复用 `t` 这个 prop 名。** 归档页子槽会用 owner props 调用 `renderSlot`，同名 `t` 会覆盖注入的 cockpit `locale.t`，页面就会显示 `cleanupTitle` 这类原始 key；本项目的清理块改用独立 prop `ct`。

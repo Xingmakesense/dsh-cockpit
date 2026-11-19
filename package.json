@@ -1,6 +1,6 @@
 {
   "name": "dsh-cockpit",
-  "version": "3.5.1",
+  "version": "3.6.0",
   "description": "DSH 驾驶舱套件：通过官方 agent/request-error 钩子覆盖 retryPolicy 的自动续轮、会话归档与空对话清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计、孤儿附件清理、懒加载的会话统计、排查侧栏（推理强度滑条由独立的 dsh-effort-slider 提供）。 · Suite with official request-error retry-policy override, session archive and cleanup, a composer cleanup button, download progress, deletion audit, orphan-attachment cleanup, lazy session statistics, a diagnostics sidebar; the reasoning slider lives in the standalone dsh-effort-slider package.",
   "type": "module",
   "main": "host.js",

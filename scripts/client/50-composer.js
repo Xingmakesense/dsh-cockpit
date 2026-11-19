@@ -2,8 +2,21 @@
         // button and the current retry notice share the row, so a notice never
         // changes the stack height and can never push this row (or the official
         // scroll-to-bottom control) upward.
-        function ComposerBar({ t, send, store, sessionId }) {
+        // The cleanup button only makes sense while a session is idle after its
+        // turn stopped. `stopped` comes from the slot's keyed sessionStatus hook:
+        // true = not running, false = running, undefined = not running yet, so
+        // a never-started session never shows the button.
+        function ComposerBar({ t, send, store, sessionId, useSessionStatus }) {
             const [phase, setPhase] = React.useState({ status: "idle", error: "" });
+            // The cleanup button appears only after a turn stopped. The
+            // official session status row carries `running`; a session that
+            // never started has no row, so the button stays hidden.
+            const statusOf = typeof useSessionStatus === "function"
+                ? useSessionStatus((status) => status?.get?.(sessionId))
+                : undefined;
+            const stopped = statusOf !== undefined && statusOf !== null && typeof statusOf === "object"
+                ? statusOf.running === false
+                : false;
             const notices = React.useSyncExternalStore(store.subscribe, store.get, store.get);
             const relevant = sessionId === undefined ? notices : notices.filter((notice) => notice.sessionId === sessionId);
             const notice = relevant[relevant.length - 1];
@@ -89,6 +102,9 @@
                     )
                     : null;
 
+            const buttonVisible = stopped === true;
+            if (!buttonVisible && notice === null && phase.status === "idle") return null;
+
             return h("div", {
                 style: {
                     display: "flex",
@@ -105,7 +121,7 @@
                     boxSizing: "border-box"
                 }
             },
-            h("button", {
+            buttonVisible ? h("button", {
                 type: "button",
                 "aria-label": t("cleanTempHint"),
                 disabled: phase.status === "sending",
@@ -125,7 +141,7 @@
                     flex: "none",
                     opacity: phase.status === "sending" ? 0.6 : 1
                 }
-            }, label),
+            }, label) : null,
             status
             );
         }

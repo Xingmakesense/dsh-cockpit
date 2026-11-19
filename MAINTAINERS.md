@@ -25,7 +25,8 @@
 3. **续轮提示来自官方事件与额外续轮层。** 官方 `llm/retry` 提供 `phase: "provider"` 的重试进度；本插件的额外续轮发布 `phase: "extra"`；`turn/end reason.kind = "error"` 为不可重试错误提供 `blocked` 提示。客户端轮询 `GET /api/cockpit/auto-continue`，提示与清理按钮共用 32px 固定高度 dock 行。
 4. **Config 必须原生 volatile。** `Config` 来自 vendored schemastery 且根节点 `.volatile()`，否则 `ctx.settings.describe()` 会静默跳过本插件；设置页必须走 `ctx.remote.settings`（返回 `RemoteResult`）。
 5. **用户消息发送。** 客户端发送普通用户消息用 `sessions.binding(sessionId).session.prompt(content, "queue")`；`queue` 等价于用户回车，`steer` 是中途引导。按钮固定发送 `清理本项目的临时产物`。
-6. **按钮位置。** `conversation.input.dock` 渲染在输入框卡片上方（卡片外侧，宽度与卡片一致），按钮左对齐；该行高度固定为 32px，续轮提示内联在同一行，因此提示出现不会推动按钮或官方回到底部按钮。`conversation.input.left/right/overlay/activity` 位于卡片内侧。
+6. **按钮显隐。** `ComposerBar` 通过 shell 的 `sessionStatus` 钩子读取当前会话 `running`；只有本轮已停止（`running === false`）才渲染按钮，运行中或从未运行过时整行返回 `null`，不占 dock 高度。不要在客户端自行轮询运行状态。
+7. **按钮位置。** `conversation.input.dock` 渲染在输入框卡片上方（卡片外侧，宽度与卡片一致），按钮左对齐；该行高度固定为 32px，续轮提示内联在同一行，因此提示出现不会推动按钮或官方回到底部按钮。`conversation.input.left/right/overlay/activity` 位于卡片内侧。
 7. **会话菜单宿主探测。** 会话右键菜单由 `ctx.contextMenus` 托管，`sidebar.workspaces.session.menu.item` 槽声明在 `contextMenu.content`（key `session`）下。vendored 客户端的模式探测必须同时接受 `contextMenu.content` 与 `sidebar.workspaces` 两种声明位置，并在两者变化时重新协调。
 8. **删除审计事件**：vendored 归档 host 发出 `archive-manager/session-deleted`，`maintenance.js` 落盘；改 vendored 删除流程时保持该事件。
 9. **附件清理安全阀**：任一转录读取失败、zstd 帧不完整或会话根为空时整轮放弃；扫描必须逐帧解码并仅保留引用哈希。

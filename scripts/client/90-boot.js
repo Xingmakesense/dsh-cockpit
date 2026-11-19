@@ -52,7 +52,12 @@
                                 t,
                                 store: noticeStore,
                                 sessionId,
-                                send: () => sendUserText(uiCtx.sessions, sessionId, CLEAN_TEMP_MESSAGE)
+                                send: () => sendUserText(uiCtx.sessions, sessionId, CLEAN_TEMP_MESSAGE),
+                                hooks: {
+                                    // Reactive session status from the shell: no polling
+                                    // and no extra transport.
+                                    sessionStatus: () => uiCtx.sessions.list
+                                }
                             })
                         }, ComposerBar));
 

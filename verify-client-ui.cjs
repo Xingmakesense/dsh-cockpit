@@ -251,8 +251,13 @@ async function main() {
         if (value) assert(value.startsWith("var(--dsw-") || value === "transparent", `composer button ${property} must come from a DSH theme token`);
     }
     assert(titledNodes(buttonTree).length === 0, "the composer button must not use native title tooltips");
+    assert(String(buttonTree.props.style?.maxWidth ?? "").includes("--dsh-composer-card-max-width"),
+        "the button row must match the composer card width");
+    assert(buttonTree.props.style?.margin === "0 auto", "the button row must be centered over the composer");
+    assert(String(buttonTree.props.style?.justifyContent ?? "") === "flex-end", "the button must stay right-aligned");
     const dockButton = findNode(buttonTree, (node) => node.type === "button");
     assert(dockButton !== undefined, "composer button must render");
+    assert(dockButton.props.style?.height === 48, "the composer button height must be 48px (twice the old 24px)");
     for (const property of ["border", "color"]) {
         assert(String(dockButton.props.style?.[property] ?? "").includes("var(--dsw-"),
             `composer button ${property} must come from a DSH theme token`);

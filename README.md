@@ -1,4 +1,4 @@
-# DSH Cockpit v3.1.0
+# DSH Cockpit v3.1.1
 
 DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自动续轮、会话归档与清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计与孤儿附件回收。
 
@@ -23,7 +23,7 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 
 ### 清理临时产物按钮
 
-- 注册在 `conversation.input.dock`：位于输入框卡片上方的 dock 区域，右对齐，位于输入框卡片外侧。
+- 注册在 `conversation.input.dock`：位于输入框卡片上方的 dock 区域，宽度与输入框卡片一致，按钮右对齐并位于卡片外侧。
 - 点击后通过官方 Session 接口 `sessions.binding(sessionId).session.prompt([{ type: "text", text }], "queue")` 发送，消息内容固定为 `清理本项目的临时产物`，与用户手动输入并回车完全等价。
 - 按钮只负责发送；具体清理范围由当前会话的 agent 按项目约定执行。
 

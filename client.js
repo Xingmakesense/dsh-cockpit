@@ -1895,9 +1895,12 @@ window.__ModuleLoader__.load({
                     justifyContent: "flex-end",
                     alignItems: "center",
                     gap: 8,
-                    width: "100%",
-                    boxSizing: "border-box",
-                    padding: "0 2px"
+                    // Match the composer card's width so the button sits over the
+                    // card's right edge instead of the full conversation column.
+                    width: "calc(100% - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-dock-inset, 8px) - var(--dsh-composer-dock-inset, 8px))",
+                    maxWidth: "calc(var(--dsh-composer-card-max-width, 760px) - var(--dsh-composer-dock-inset, 8px) - var(--dsh-composer-dock-inset, 8px))",
+                    margin: "0 auto",
+                    boxSizing: "border-box"
                 }
             },
             phase.status === "error" ? h("span", {
@@ -1911,10 +1914,15 @@ window.__ModuleLoader__.load({
                 onClick: click,
                 style: {
                     ...ghostButtonStyle,
-                    padding: "3px 9px",
-                    fontSize: 11,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    height: 48,
+                    padding: "0 16px",
+                    fontSize: 12,
                     lineHeight: "16px",
                     borderRadius: 999,
+                    boxSizing: "border-box",
                     opacity: phase.status === "sending" ? 0.6 : 1
                 }
             }, label)

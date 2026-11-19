@@ -14,7 +14,7 @@
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
-import { decompressFrame } from "./vendor/archive-manager/lib/session-repair.js";
+import zlib from "node:zlib";
 
 const HOUR = 3_600_000;
 const GRACE_MS = 24 * HOUR;
@@ -42,6 +42,16 @@ export async function appendAudit(home, record) {
         if (error?.code !== "ENOENT") throw error;
     }
     await appendFile(path, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+/** Decode one zstd frame; this feature owns the decoder instead of borrowing the archive vendor. */
+function decompressFrame(bytes, maxOutputLength) {
+    const result = zlib.zstdDecompressSync(bytes, { info: true, maxOutputLength });
+    const engine = result.engine;
+    if (!Buffer.isBuffer(result.buffer) || typeof engine?.bytesWritten !== "number") {
+        throw new Error("zstd frame returned an invalid shape");
+    }
+    return { buffer: result.buffer, engine: { bytesWritten: engine.bytesWritten } };
 }
 
 /** Scan hashes frame-by-frame without parsing or materializing a whole JSONL transcript. */

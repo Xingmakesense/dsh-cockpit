@@ -1147,9 +1147,9 @@ window.__ModuleLoader__.load({
                 maxAttempts: "额外续轮次数",
                 delayMs: "续轮延迟（毫秒）",
                 prominent: "显示自动续轮提示",
-                retryHint: "覆盖官方重试策略：每次请求最多重试 {provider} 次；官方重试结束后，再额外续轮 {max} 次。",
+                retryHint: "覆盖官方重试策略：每次请求最多重试 {provider} 次；官方重试结束后，再额外续轮 {max} 次（每轮都重新获得同样的重试预算）。",
                 formulaTitle: "最多尝试次数",
-                formula: "1 次首发请求 + {provider} 次请求重试 + {max} 次额外续轮",
+                formula: "（1 + 单次请求重试次数）×（1 + 额外续轮次数）",
                 requestUnit: "次请求",
                 noticeExtra: "额外续轮",
                 save: "保存",
@@ -1190,9 +1190,9 @@ window.__ModuleLoader__.load({
                 maxAttempts: "Extra continuations",
                 delayMs: "Delay (ms)",
                 prominent: "Show auto-continue notices",
-                retryHint: "The official retry policy is replaced here: up to {provider} retries per request, then up to {max} extra continuations.",
+                retryHint: "The official retry policy is replaced here: up to {provider} retries per request, then up to {max} extra continuation rounds, each with the same retry budget.",
                 formulaTitle: "Maximum attempts",
-                formula: "1 first request + {provider} request retries + {max} extra continuations",
+                formula: "(1 + retries per request) × (1 + extra continuations)",
                 requestUnit: "requests",
                 noticeExtra: "Extra continuation",
                 save: "Save",
@@ -1530,6 +1530,28 @@ window.__ModuleLoader__.load({
             );
         }
 
+        // Compact cleanup block rendered at the top of the archive page.
+        function CleanupBlock({ t, getWorkspaceRegistry }) {
+            return h("div", {
+                style: {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap",
+                    padding: "0 0 10px",
+                    marginBottom: 10,
+                    borderBottom: "1px solid " + THEME.border
+                }
+            },
+            h("div", { style: { flex: "1 1 240px", minWidth: 0 } },
+                h("div", { style: { fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 2 } }, t("cleanupTitle")),
+                h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("cleanupDescription"))
+            ),
+            h(EmptySessionCleanup, { t, getWorkspaceRegistry })
+            );
+        }
+
         // -------------------------------------------------------------------
         // Styles (inline; the harness theme tokens are used when present).
         //
@@ -1602,6 +1624,7 @@ window.__ModuleLoader__.load({
         // Right-aligned button above the composer card: it sends an ordinary
         // user message through the documented Session prompt API, exactly like
         // typing it and pressing Enter.
+
         /** Notices published by the Host snapshot route. */
         function createNoticeStore() {
             let value = Object.freeze([]);
@@ -1772,7 +1795,7 @@ window.__ModuleLoader__.load({
             const draft = state.draft ?? pickValues(undefined);
             const busy = saveState === "saving";
             const incomplete = NUMERIC_FIELDS.some(([key]) => draft[key] === "");
-            const total = 1 + Number(draft.providerRetryMaxRetries || 0) + Number(draft.maxAttempts || 0);
+            const total = (1 + Number(draft.providerRetryMaxRetries || 0)) * (1 + Number(draft.maxAttempts || 0));
 
             return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
                 h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("title")),
@@ -1828,7 +1851,7 @@ window.__ModuleLoader__.load({
                     h("div", { style: { fontSize: 14, lineHeight: 1.7, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } },
                         h("div", null, t("formula", { provider: draft.providerRetryMaxRetries, max: draft.maxAttempts })),
                         h("div", { style: { marginTop: 6, color: THEME.textSecondary } },
-                            "= 1 + " + draft.providerRetryMaxRetries + " + " + draft.maxAttempts + " = " + total),
+                            "= (1 + " + draft.providerRetryMaxRetries + ") × (1 + " + draft.maxAttempts + ") = " + total),
                         h("div", { style: { marginTop: 6, fontSize: 20, fontWeight: 700 } }, total + " " + t("requestUnit"))
                     )
                 ),
@@ -1970,30 +1993,6 @@ window.__ModuleLoader__.load({
                 }
             }, label),
             status
-            );
-        }
-
-
-
-        // Compact cleanup block rendered at the top of the archive page.
-        function CleanupBlock({ t, getWorkspaceRegistry }) {
-            return h("div", {
-                style: {
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    flexWrap: "wrap",
-                    padding: "0 0 10px",
-                    marginBottom: 10,
-                    borderBottom: "1px solid " + THEME.border
-                }
-            },
-            h("div", { style: { flex: "1 1 240px", minWidth: 0 } },
-                h("div", { style: { fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 2 } }, t("cleanupTitle")),
-                h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("cleanupDescription"))
-            ),
-            h(EmptySessionCleanup, { t, getWorkspaceRegistry })
             );
         }
 

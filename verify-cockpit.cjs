@@ -43,14 +43,13 @@ async function checkHostEntry() {
     assert(readOrNull("./verify-auto-continue.cjs") !== null, "verify-auto-continue.cjs must exist");
 }
 
-function checkClientArtifact() {
-    const vendor = read("./vendor/archive-manager/lib/client.js");
-    const wrapper = read("./scripts/client-wrapper.js");
+async function checkClientArtifact() {
+    const { composeClient } = await import("./scripts/build-client.mjs");
     const client = read("./client.js");
 
     assert(
-        client === `${vendor}\n${wrapper}`,
-        "client.js must be vendor client + wrapper (run `node scripts/build-client.mjs`)"
+        client === composeClient(),
+        "client.js must match vendor client + scripts/client modules (run `node scripts/build-client.mjs`)"
     );
 
     // Upstream-only surfaces removed in 2.3.0: project links, issue feedback,
@@ -103,7 +102,7 @@ function checkClientArtifact() {
         'renderSlot?.("archive-manager.cleanup"',
         "最多尝试次数",
         "额外续轮次数",
-        "= 1 + "
+        "× (1 + "
     ]) {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
     }
@@ -171,7 +170,7 @@ function checkLocaleMeta() {
 function checkManifest() {
     const pkg = JSON.parse(read("./package.json"));
     assert(pkg.name === "dsh-cockpit", "package name must stay dsh-cockpit");
-    assert(pkg.version === "3.2.0", "package.json version must stay 3.2.0");
+    assert(pkg.version === "3.3.0", "package.json version must stay 3.3.0");
     assert(pkg.dsh?.bundle?.patch === "./cordis.patch.yml", "dsh.bundle.patch must point at cordis.patch.yml");
     assert(pkg.dsh?.client?.platform === "web", "dsh.client.platform must stay web");
 
@@ -208,7 +207,7 @@ function checkProjectionMigrationSource() {
 async function main() {
     await checkHostEntry();
     checkProjectionMigrationSource();
-    checkClientArtifact();
+    await checkClientArtifact();
     checkSessionMenuDetection();
     checkHostArtifact();
     checkDeletionSemantics();

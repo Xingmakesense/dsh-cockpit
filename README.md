@@ -1,4 +1,4 @@
-# DSH Cockpit v3.2.0
+# DSH Cockpit v3.3.0
 
 DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自动续轮、会话归档与清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计与孤儿附件回收。
 
@@ -8,11 +8,11 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 
 ### 自动续轮
 
-- 在官方 `agent/request-error` 恢复钩子上覆盖 `payload.retryPolicy`：先按“单次请求重试次数”执行官方重试，官方重试用尽后再按“额外续轮次数”继续自动重试。
+- 在官方 `agent/request-error` 恢复钩子上覆盖 `payload.retryPolicy`：先按“单次请求重试次数”执行官方重试；官方重试用尽后开始一轮额外续轮，每轮都重新获得同样的官方重试预算，因此总尝试次数按乘法计算。
 - 监听器以 `prepend` 先于官方重试监听器运行，覆盖策略后通过 `next()` 交给官方 `dsh-llm-retry` 执行；重试、退避与取消全部由官方控件完成。
 - 重试在当前步骤内进行，不写入任何对话消息，也不会产生新的用户消息。
 - 不可自愈的故障码（`AUTH` / `QUOTA` / `BAD_REQUEST` 等）会从可重试集合中剔除，直接保留原始错误。
-- 「设置 → 插件 → 自动续轮」：启用开关、单次请求重试次数、额外续轮次数、续轮延迟、提示开关；页面底部实时计算“最多尝试次数 = 1 + 单次请求重试次数 + 额外续轮次数”。
+- 「设置 → 插件 → 自动续轮」：启用开关、单次请求重试次数、额外续轮次数、续轮延迟、提示开关；页面底部实时计算“最多尝试次数 =（1 + 单次请求重试次数）×（1 + 额外续轮次数）”。
 - 续轮进度来自官方持久化 `llm/retry` 事件，最终失败来自 `turn/end`；提示与操作按钮位于输入框上方同一固定高度行内，提示出现时不会改变布局高度。
 
 ### 会话管理
@@ -71,7 +71,7 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 最多尝试次数（设置页实时计算）：
 
 ```text
-1（首次请求） + providerRetryMaxRetries（单次请求重试） + maxAttempts（额外续轮）
+（1 + providerRetryMaxRetries）×（1 + maxAttempts）
 ```
 
 覆盖后的策略保持官方 `ResolvedRetryPolicy` 的 `normal` 模式：`maxRetries` 固定取 `providerRetryMaxRetries`，`retryableCodes` 取本插件配置，`maxDelayMs`、`jitterRatio` 沿用官方提供方策略（缺失时使用 10 秒与 0.1）。
@@ -83,6 +83,18 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 - 删除会同时清理工作区记账、置顶、收藏以及当前/历史投影缓存域。
 - 「清理临时产物」按钮发送的是普通用户消息；如果当前会话还在运行，消息会按队列模式排队。
 
+## 模块与依赖
+
+每个功能都是一个独立模块，Host 侧模块之间不互相导入：
+
+- `auto-continue.js`：续轮策略、Config 与提示快照路由；只使用 Vendored Schemastery 与 Node 内置能力。
+- `archive.js` + `vendor/archive-manager/`：归档页、删除与恢复；Vendored 代码只使用 DSH 运行时提供的核心包。
+- `maintenance.js`：删除审计与孤儿附件清理；自带 zstd 帧解码器，不再借用归档模块。
+- `downloads.js`：下载字节观测与同源快照路由；只使用 Node 内置模块。
+- `scripts/client/`：按功能拆分的客户端模块（shell、downloads、cleanup、theme、auto-continue、composer、boot），共享同一个 Loader factory，不引入第三方 npm 依赖。
+
+因此单个功能可以独立维护或拆分出去，不会因其他功能的改动而失效。
+
 ## 项目结构
 
 ```text
@@ -93,6 +105,7 @@ maintenance.js      删除审计 + 孤儿附件清理
 downloads.js        Host 下载字节观测与进度快照
 client.js           客户端产物（生成物，勿手改）
 scripts/            客户端生成脚本与发布脚本
+scripts/client/     按功能拆分的客户端模块
 vendor/             vendored 归档实现与 schemastery/cosmokit 副本
 verify-*.cjs        回归测试
 MAINTAINERS.md      维护手册
@@ -136,7 +149,7 @@ node scripts/build-client.mjs --check && node --check host.js && node --check au
 
 1. **续轮必须覆盖官方策略，而不是绕开官方执行器。** 在 `agent/request-error` 上以 `prepend` 运行、改写 `payload.retryPolicy` 后调用 `next()`，让官方 `dsh-llm-retry` 执行重试；不要自己返回 `{kind:"retry"}` 绕过退避、取消与持久化事件，也不要伪造 `runtime-context` 消息。
 2. **配置必须是原生 volatile schema。** `Config` 来自 vendored schemastery 且根节点 `.volatile()`，否则 `ctx.settings.describe()` 会静默跳过本插件；设置页必须走 `ctx.remote.settings`（返回 `RemoteResult`）。
-3. **`client.js` 是生成物。** 它由 `vendor/archive-manager/lib/client.js` 与 `scripts/client-wrapper.js` 拼接而成；改客户端只改这两处，再执行 `node scripts/build-client.mjs`。
+3. **`client.js` 是生成物。** 它由 `vendor/archive-manager/lib/client.js` 与 `scripts/client/` 下按功能拆分的模块拼接而成；改客户端只改对应功能模块，再执行 `node scripts/build-client.mjs`。
 4. **会话菜单槽的声明位置。** 会话右键菜单由 `ctx.contextMenus` 托管，`sidebar.workspaces.session.menu.item` 槽声明在 `contextMenu.content`（key `session`）下；只探测 `sidebar.workspaces` 会让插件降级到自带侧栏，「删除会话」入口消失。
 5. **主题色只能引用 DSH 真实存在的 `--dsw-*` 变量。** 不存在的变量不会报错，只会静默回退；深色 fallback 落到浅色页面上就是“深底深字”。
 6. **删除必须走同一条 registry 路径。** 归档页删除、右键删除、空对话清理共用 `workspaceRegistry` 的删除实现并发出 `archive-manager/session-deleted` 审计事件；父会话删除必须级联全部 `origin: "subagent"` 后代，fork 分支不连带。

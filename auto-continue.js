@@ -135,18 +135,23 @@ export function classifyContinueFailure(error) {
  * @param {ReturnType<typeof normalizeContinueConfig>} cfg normalized config
  * @param {object | undefined} incoming the provider-resolved policy
  */
-export function resolveRetryPolicy(cfg, incoming) {
+export function resolveRetryPolicy(cfg, incoming, round = 0) {
     const blocked = new Set(cfg.blockedCodes);
     const retryableCodes = [...new Set(cfg.retryableCodes.map((code) => String(code).toUpperCase()))]
         .filter((code) => !blocked.has(code));
     const fallback = incoming && typeof incoming === "object" ? incoming : {};
+    const baseJitter = Number.isFinite(fallback.jitterRatio) ? fallback.jitterRatio : 0.1;
     return {
         mode: "normal",
         maxRetries: cfg.providerRetryMaxRetries,
         retryableCodes,
         initialDelayMs: cfg.delayMs,
         maxDelayMs: Math.max(cfg.delayMs, Number.isFinite(fallback.maxDelayMs) ? fallback.maxDelayMs : 10_000),
-        jitterRatio: Number.isFinite(fallback.jitterRatio) ? fallback.jitterRatio : 0.1
+        // Each continuation must look like a fresh official policy: the
+        // official retry executor keys its counter by this policy fingerprint,
+        // so this negligible jitter delta restores the per-round provider
+        // budget and reproduces the old (1 + provider) x (1 + extra) total.
+        jitterRatio: baseJitter + round * 1e-9
     };
 }
 
@@ -223,7 +228,7 @@ export function installAutoContinue(ctx, config) {
         });
     };
 
-    const turnAttempts = new Map();
+    const turnRounds = new Map();
     const sessionIdOf = (agent) => agent?.session?.id ?? agent?.id ?? null;
 
     /**
@@ -236,29 +241,30 @@ export function installAutoContinue(ctx, config) {
         if (!payload || typeof payload !== "object" || typeof next !== "function") return next?.();
         const cfg = readConfig();
         if (!cfg.enabled) return next();
-        payload.retryPolicy = resolveRetryPolicy(cfg, payload.retryPolicy);
+        const agent = payload.agent;
+        const sessionId = sessionIdOf(agent);
+        const turnKey = sessionId === null
+            ? null
+            : sessionId + ":" + String(Number.isSafeInteger(payload.turn) ? payload.turn : "?");
+        const roundEntry = turnKey === null ? { round: 0 } : (turnRounds.get(turnKey) ?? { round: 0 });
+        payload.retryPolicy = resolveRetryPolicy(cfg, payload.retryPolicy, roundEntry.round);
         const downstream = await next();
         if (downstream && downstream.kind === "retry") return downstream;
         if (payload.signal?.aborted) return downstream;
         const failure = payload.failure;
-        const agent = payload.agent;
-        if (!failure || !agent) return downstream;
+        if (!failure || !agent || sessionId === null || turnKey === null) return downstream;
 
         const classified = classifyContinueFailure(failure);
         if (cfg.blockedCodes.includes(classified.code) || !cfg.retryableCodes.includes(classified.code)) return downstream;
 
-        const sessionId = sessionIdOf(agent);
-        if (sessionId === null) return downstream;
-        const key = sessionId + ":" + String(Number.isSafeInteger(payload.turn) ? payload.turn : "?");
-        const entry = turnAttempts.get(key) ?? { attempts: 0, halted: false };
-        if (entry.attempts >= cfg.maxAttempts) {
-            if (!entry.halted) {
-                entry.halted = true;
-                turnAttempts.set(key, entry);
+        if (roundEntry.round >= cfg.maxAttempts) {
+            if (!roundEntry.halted) {
+                roundEntry.halted = true;
+                turnRounds.set(turnKey, roundEntry);
                 if (cfg.emitProminentError) {
                     publish(sessionId, "halt", {
                         phase: "extra",
-                        attempt: entry.attempts,
+                        attempt: roundEntry.round,
                         max: cfg.maxAttempts,
                         code: classified.code,
                         detail: classified.message.slice(0, 300)
@@ -268,13 +274,13 @@ export function installAutoContinue(ctx, config) {
             return downstream;
         }
 
-        entry.attempts += 1;
-        turnAttempts.set(key, entry);
-        if (turnAttempts.size > 512) turnAttempts.delete(turnAttempts.keys().next().value);
+        roundEntry.round += 1;
+        turnRounds.set(turnKey, roundEntry);
+        if (turnRounds.size > 512) turnRounds.delete(turnRounds.keys().next().value);
         if (cfg.emitProminentError) {
             publish(sessionId, "retry", {
                 phase: "extra",
-                attempt: entry.attempts,
+                attempt: roundEntry.round,
                 max: cfg.maxAttempts,
                 code: classified.code,
                 detail: classified.message.slice(0, 300)
@@ -291,8 +297,8 @@ export function installAutoContinue(ctx, config) {
             if (!session || !event) return;
             const prefix = String(session.id) + ":";
             if (event.type === "turn/start" || event.type === "turn/end") {
-                for (const key of turnAttempts.keys()) {
-                    if (key.startsWith(prefix)) turnAttempts.delete(key);
+                for (const key of turnRounds.keys()) {
+                    if (key.startsWith(prefix)) turnRounds.delete(key);
                 }
             }
             const cfg = readConfig();
@@ -323,8 +329,8 @@ export function installAutoContinue(ctx, config) {
             const sessionId = sessionIdOf(agent);
             if (sessionId === null) return;
             const prefix = String(sessionId) + ":";
-            for (const key of turnAttempts.keys()) {
-                if (key.startsWith(prefix)) turnAttempts.delete(key);
+            for (const key of turnRounds.keys()) {
+                if (key.startsWith(prefix)) turnRounds.delete(key);
             }
             notices.delete(sessionId);
         })

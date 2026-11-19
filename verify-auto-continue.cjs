@@ -128,6 +128,38 @@ async function main() {
     assert(notices.some((notice) => notice.kind === "retry" && notice.phase === "provider" && notice.attempt === 2),
         "official llm/retry events need a provider notice");
 
+    // Multiplicative total: each extra continuation gets a fresh official
+    // retry budget because the policy fingerprint changes per round.
+    const fingerprint = (policy) => JSON.stringify([
+        policy.mode,
+        policy.maxRetries,
+        [...policy.retryableCodes].sort(),
+        policy.initialDelayMs,
+        policy.maxDelayMs,
+        policy.jitterRatio
+    ]);
+    const official = new Map();
+    let attempts = 0;
+    let ran = 0;
+    while (ran < 200) {
+        ran += 1;
+        attempts += 1;
+        const attemptPayload = payload("TIMEOUT", 7);
+        const decision = await recover.handler(attemptPayload, async () => {
+            const key = fingerprint(attemptPayload.retryPolicy);
+            const used = official.get(key) ?? 0;
+            if (used >= attemptPayload.retryPolicy.maxRetries) return undefined;
+            official.set(key, used + 1);
+            return { kind: "retry" };
+        });
+        if (!decision || decision.kind !== "retry") break;
+    }
+    const provider = behavior.providerRetryMaxRetries;
+    const extra = behavior.maxAttempts;
+    assert(attempts === (1 + provider) * (1 + extra),
+        `multiplicative total must be ${(1 + provider) * (1 + extra)}, got ${attempts}`);
+    assert(ran < 200, "the retry loop must terminate");
+
     // A successful turn publishes nothing and clears the budget.
     const before = (await noticeSnapshot()).length;
     sessionEvents({ id: "session-1" }, { type: "turn/end", data: { reason: { kind: "completed" } } });

@@ -5,7 +5,7 @@
 // text in the download card and the cleanup section. This check does two
 // things:
 //
-//   1. every `var(--dsw-…)` referenced by scripts/client-wrapper.js must exist
+//   1. every `var(--dsw-…)` referenced by scripts/client modules must exist
 //      in the token snapshot below (taken from DSH 0.2.2-rc.3);
 //   2. the colours that actually end up next to each other must keep WCAG
 //      contrast: text >= 4.5:1, non-text UI (progress fill vs. track) >= 3:1,
@@ -15,7 +15,7 @@
 const assert = (condition, message) => {
     if (!condition) throw new Error(message);
 };
-const { readFileSync } = require("node:fs");
+const { readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
 
 // --- token snapshot (light / dark) -----------------------------------------
@@ -74,7 +74,7 @@ function contrast(foreground, background) {
     const b = luminance(background);
     return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
-// Same 55/45 mix client-wrapper.js applies to state colours for small text.
+// Same 55/45 mix the client modules apply to state colours for small text.
 function stateText(stateColor, labelColor) {
     const s = parse(stateColor);
     const l = parse(labelColor);
@@ -82,7 +82,12 @@ function stateText(stateColor, labelColor) {
 }
 
 // --- 1. every referenced token exists --------------------------------------
-const wrapper = readFileSync(join(__dirname, "scripts", "client-wrapper.js"), "utf8");
+const clientDir = join(__dirname, "scripts", "client");
+const wrapper = readdirSync(clientDir)
+    .filter((name) => name.endsWith(".js"))
+    .sort()
+    .map((name) => readFileSync(join(clientDir, name), "utf8"))
+    .join("\n");
 // Comments explain the old trap and mention the dead token names; drop them
 // before scanning so only real style references are audited.
 const code = wrapper.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
@@ -91,7 +96,7 @@ for (const token of REMOVED) {
     assert(!referenced.has(token), `${token} does not exist in DSH and must not be referenced again`);
 }
 for (const token of referenced) {
-    assert(Object.hasOwn(TOKENS, token), `client-wrapper.js references ${token}, which is missing from the DSH token snapshot`);
+    assert(Object.hasOwn(TOKENS, token), `the client modules reference ${token}, which is missing from the DSH token snapshot`);
 }
 
 // --- 2. contrast on both themes --------------------------------------------

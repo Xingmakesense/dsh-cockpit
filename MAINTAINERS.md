@@ -12,13 +12,13 @@
 | `maintenance.js` | 删除审计落盘与轮转、孤儿附件清扫、定时器 | 不改会话/归档状态 |
 | `downloads.js` | Host 下载字节观测、文件名解析与同源快照路由 | 不拦截保存路径，不重复下载文件 |
 | `client.js` | 生成物，勿手改 | — |
-| `scripts/client-wrapper.js` | 续轮提示、续轮设置页、下载卡片、归档页顶部的清理块、「清理临时产物」按钮 | 不写续轮状态机或归档 Host 逻辑 |
+| `scripts/client/` | 按功能拆分的客户端模块：`00-shell`、`10-downloads`、`20-cleanup`、`30-theme`、`40-auto-continue`、`50-composer`、`90-boot` | 不写续轮状态机或归档 Host 逻辑；模块之间不互相导入；改完运行 `node scripts/build-client.mjs` |
 | `vendor/archive-manager/` | 归档实现（Apache-2.0） | 不与仓库其他部分循环依赖 |
 | `vendor/schemastery.mjs`、`vendor/cosmokit.mjs` | Config 使用的原生 schema 副本（MIT） | 仅替换 import 路径，不改实现 |
 
 ## 2. 关键契约（改代码前必读）
 
-1. **续轮覆盖官方策略，再由官方执行，最后追加额外续轮。** 以 `prepend: true` 监听 `agent/request-error`，把 `payload.retryPolicy` 替换为 `resolveRetryPolicy(...)`（`maxRetries = providerRetryMaxRetries`），再调用 `next()`。官方 `dsh-llm-retry` 负责退避、取消与 `llm/retry` 持久化事件；官方重试用尽后，本插件按 Turn 计数返回官方动作 `{kind:"retry"}`，最多 `maxAttempts` 次。不要伪造 `runtime-context` 消息。
+1. **续轮覆盖官方策略，再由官方执行，最后追加额外续轮。** 以 `prepend: true` 监听 `agent/request-error`，把 `payload.retryPolicy` 替换为 `resolveRetryPolicy(...)`（`maxRetries = providerRetryMaxRetries`），再调用 `next()`。官方 `dsh-llm-retry` 负责退避、取消与 `llm/retry` 持久化事件；官方重试用尽后，本插件按 Turn 计数返回官方动作 `{kind:"retry"}`，最多 `maxAttempts` 次。为了复刻旧版的乘法总次数，每一轮额外续轮都会把策略指纹中的 `jitterRatio` 增加 `1e-9`，让官方执行器把该轮视为新策略并重新获得 `providerRetryMaxRetries` 预算。不要伪造 `runtime-context` 消息。
 2. **不可重试码从集合中剔除。** `blockedCodes` 必须从覆盖后的 `retryableCodes` 中移除；否则官方执行器仍会重试。
 3. **续轮提示来自官方事件与额外续轮层。** 官方 `llm/retry` 提供 `phase: "provider"` 的重试进度；本插件的额外续轮发布 `phase: "extra"`；`turn/end reason.kind = "error"` 为不可重试错误提供 `blocked` 提示。客户端轮询 `GET /api/cockpit/auto-continue`，提示与清理按钮共用 32px 固定高度 dock 行。
 4. **Config 必须原生 volatile。** `Config` 来自 vendored schemastery 且根节点 `.volatile()`，否则 `ctx.settings.describe()` 会静默跳过本插件；设置页必须走 `ctx.remote.settings`（返回 `RemoteResult`）。
@@ -33,7 +33,7 @@
 
 ### 2.1 样式只能使用 DSH 已定义的变量
 
-`client-wrapper.js` 的内联样式全部走 `--dsw-*` 主题变量。写不存在的变量不会报错，只会静默回退到 fallback，
+`scripts/client/` 各模块的内联样式全部走 `--dsw-*` 主题变量。写不存在的变量不会报错，只会静默回退到 fallback，
 深色 fallback 落在浅色页面上就会变成“深底深字”。新增颜色时：
 
 1. 先在 DSH 主题里确认变量真实存在（`:root` 为浅色，`body[data-ds-dark-theme]` 为深色）；
@@ -51,7 +51,7 @@
 | `emitProminentError` | `true` | 是否发布提示快照 |
 | `retryableCodes` / `blockedCodes` | 见 `CONTINUE_DEFAULTS` | 参与/不参与重试的故障码 |
 
-修改字段时同步：`auto-continue.js`、`client-wrapper.js` 的 `pickValues` / `NUMERIC_FIELDS` / `save` / 公式、测试与 README、以及 `cordis.patch.yml`。
+修改字段时同步：`auto-continue.js`、`scripts/client/40-auto-continue.js` 的 `pickValues` / `NUMERIC_FIELDS` / `save` / 公式、测试与 README、以及 `cordis.patch.yml`。
 
 ## 4. 测试矩阵
 
@@ -63,7 +63,7 @@
 | `node verify-client-ui.cjs` | stub loader 评估 `client.js`：续轮提示、设置页、归档页顶部清理块、按钮发送路径与主题 token |
 | `node verify-downloads.cjs` | Host 附件响应包装、真实字节计数、文件名/后缀、完成状态与快照 |
 | `node verify-maintenance.cjs` | 审计落盘、附件引用/孤儿/宽限期、多帧与损坏 zstd、空 home 安全阀 |
-| `node verify-theme-tokens.cjs` | `client-wrapper.js` 只引用 DSH 真实存在的 `--dsw-*` 变量；两套主题对比度达标 |
+| `node verify-theme-tokens.cjs` | `scripts/client/` 模块只引用 DSH 真实存在的 `--dsw-*` 变量；两套主题对比度达标 |
 
 发布前全部检查全绿，并执行 `node scripts/build-client.mjs --check`、`node --check host.js`、`node --check auto-continue.js`、`node --check client.js`。
 

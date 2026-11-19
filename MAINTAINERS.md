@@ -33,6 +33,7 @@
 11. **缓存性能**：存活会话集合每次迁移/清扫最多读取一次 `sessionPersistence.list()`；孤儿行在各自域内批量删除，不得按候选逐个 `stat()`。
 12. **下载观测**：只在 `connection/request` 的响应包装中统计字节，必须调用原 `next()` 并保持原响应内容、背压和保存流程；无 `Content-Length` 时不得伪造百分比。
 13. **统计投影必须懒安装。** `stats.js` 在 `GET /api/cockpit/stats` 第一次被请求时才 `ctx.inject(['sessionProjections','sessions'])` 并注册 `cockpitInsights`；注册本身不 replay，扫描只对 `sessions.list()` 中的存活会话做快照。不要在 `apply` 或注入回调里遍历会话预热，否则启动会卡顿。投影 key 固定 `cockpitInsights`、`stateVersion 5`，wire view 由 vendored `viewOf` 产出；统计页与侧栏只消费聚合结果。
+14. **注入到他人子槽的 prop 不能叫 `t`。** 归档页用自身 owner props 调 `renderSlot`，同名 `t` 会覆盖注入的 cockpit `locale.t`，清理块曾因此显示 `cleanupTitle` 原始 key；清理块改用独立 prop `ct`，新增子槽组件沿用这个约定。
 
 ### 2.1 样式只能使用 DSH 已定义的变量
 

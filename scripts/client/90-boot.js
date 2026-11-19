@@ -56,11 +56,17 @@
                             })
                         }, ComposerBar));
 
+                        // The archive page owns this child slot and renders it
+                        // with its own props, including a translator bound to the
+                        // archive namespace. Owner props win over the injected
+                        // props, so cockpit copy is injected as "ct" to keep the
+                        // cockpit dictionary; naming it "t" made the block fall
+                        // back to raw keys such as "cleanupTitle".
                         uiCtx.slots.inject("archive-manager.cleanup", () => uiCtx.slots.register({
                             name: "archive-manager.cleanup",
                             id: "cockpit-cleanup",
                             locale: NS,
-                            inject: () => ({ t, getWorkspaceRegistry })
+                            inject: () => ({ ct: t, getWorkspaceRegistry })
                         }, CleanupBlock));
 
                         const settings = uiCtx.remote?.settings;

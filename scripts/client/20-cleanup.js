@@ -1,7 +1,7 @@
         const CLEANUP_ROUTE = "api/cockpit/empty-sessions";
         const DOWNLOAD_ROUTE = "api/cockpit/downloads";
 
-        function EmptySessionCleanup({ t, getWorkspaceRegistry }) {
+        function EmptySessionCleanup({ ct, getWorkspaceRegistry }) {
             const [state, setState] = React.useState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
 
             const unavailable = () => Object.assign(new Error("cleanup route unavailable"), { routeUnavailable: true });
@@ -67,7 +67,7 @@
                     disabled: busy,
                     onClick: preview,
                     style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 }
-                }, busy ? "…" : t("emptyCleanup")),
+                }, busy ? "…" : ct("emptyCleanup")),
                 state.phase !== "idle" ? h("span", {
                     role: state.phase === "confirm" ? "alertdialog" : "status",
                     style: {
@@ -88,24 +88,31 @@
                     }
                 },
                 state.phase === "loading" ? h("span", null, "…") : null,
-                state.phase === "empty" ? h("span", null, t("emptyNone")) : null,
-                state.phase === "confirm" ? h("span", null, t("emptyConfirm", { empty: state.emptyCount, ghost: state.ghostCount, skipped: state.skipped })) : null,
+                state.phase === "empty" ? h("span", null, ct("emptyNone")) : null,
+                state.phase === "confirm" ? h("span", null, ct("emptyConfirm", { empty: state.emptyCount, ghost: state.ghostCount, skipped: state.skipped })) : null,
                 state.phase === "deleting" ? h("span", null, "…") : null,
-                state.phase === "done" ? h("span", null, t("emptyDeleteResult", {
+                state.phase === "done" ? h("span", null, ct("emptyDeleteResult", {
                     deleted: state.result.deletedSessionIds.length,
                     skipped: state.result.skippedSessionIds.length,
                     failed: state.result.failures.length
                 })) : null,
-                state.phase === "error" ? h("span", null, `${t("emptyFailed")}${state.error}`) : null,
+                state.phase === "error" ? h("span", null, `${ct("emptyFailed")}${state.error}`) : null,
                 h("span", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 } },
-                    state.phase === "confirm" ? h("button", { type: "button", onClick: remove, style: { ...buttonStyle, padding: "5px 10px", fontSize: 12 } }, t("emptyDeleteConfirm")) : null,
-                    h("button", { type: "button", onClick: close, style: { ...ghostButtonStyle, padding: "5px 10px", fontSize: 12 } }, t("cancel"))
+                    state.phase === "confirm" ? h("button", { type: "button", onClick: remove, style: { ...buttonStyle, padding: "5px 10px", fontSize: 12 } }, ct("emptyDeleteConfirm")) : null,
+                    h("button", { type: "button", onClick: close, style: { ...ghostButtonStyle, padding: "5px 10px", fontSize: 12 } }, ct("cancel"))
                 )) : null
             );
         }
 
         // Compact cleanup block rendered at the top of the archive page.
-        function CleanupBlock({ t, getWorkspaceRegistry }) {
+        //
+        // The archive page owns `archive-manager.cleanup` and renders it with
+        // its own props, including a `t` bound to the archive namespace. The
+        // slot renderer spreads those owner props over the registered inject,
+        // so an injected prop named `t` would be replaced by the archive copy
+        // and cockpit keys would fall back to raw strings. `ct` is the cockpit
+        // translator under a name the owner cannot shadow.
+        function CleanupBlock({ ct, getWorkspaceRegistry }) {
             return h("div", {
                 style: {
                     display: "flex",
@@ -119,9 +126,9 @@
                 }
             },
             h("div", { style: { flex: "1 1 240px", minWidth: 0 } },
-                h("div", { style: { fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 2 } }, t("cleanupTitle")),
-                h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("cleanupDescription"))
+                h("div", { style: { fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 2 } }, ct("cleanupTitle")),
+                h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, ct("cleanupDescription"))
             ),
-            h(EmptySessionCleanup, { t, getWorkspaceRegistry })
+            h(EmptySessionCleanup, { ct, getWorkspaceRegistry })
             );
         }

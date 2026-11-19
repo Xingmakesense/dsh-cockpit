@@ -1125,14 +1125,14 @@ window.__ModuleLoader__.load({
 
         const DICTS = {
             zh: {
-                cleanupTitle: "空对话清理",
-                cleanupDescription: "删除空对话，以及没有父会话引用的子会话（幽灵会话）。先预览，确认后永久删除。",
-                emptyCleanup: "清理",
+                cleanupTitle: "清理空会话",
+                cleanupDescription: "删除没有发过消息的空会话，以及没有父会话引用的子会话（父会话已删除，或已不再引用它）。先预览，确认后永久删除。",
+                emptyCleanup: "清理空会话",
                 emptyNone: "没有需要清理的会话",
-                emptyConfirm: "发现 {empty} 个空对话、{ghost} 个幽灵会话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
-                emptyDeleteConfirm: "确认删除",
-                emptyDeleteResult: "已删除 {deleted}，跳过 {skipped}，失败 {failed}",
-                emptyFailed: "操作失败：",
+                emptyConfirm: "找到 {empty} 个空会话、{ghost} 个没有父会话引用的子会话。确认后会永久删除（另有 {skipped} 个会被跳过），无法恢复。",
+                emptyDeleteConfirm: "永久删除",
+                emptyDeleteResult: "已删除 {deleted} 个，跳过 {skipped} 个，失败 {failed} 个",
+                emptyFailed: "清理失败：",
                 cancel: "取消",
                 cleanTemp: "清理临时产物",
                 cleanTempHint: "以用户身份发送「清理本项目的临时产物」",
@@ -1285,14 +1285,14 @@ window.__ModuleLoader__.load({
                 findingsEmpty: "没有重复失败证据"
             },
             en: {
-                cleanupTitle: "Empty chat cleanup",
-                cleanupDescription: "Delete empty chats and subagent sessions no parent references (ghost sessions). Preview first, then delete permanently.",
-                emptyCleanup: "Clean",
+                cleanupTitle: "Clean up empty sessions",
+                cleanupDescription: "Remove empty sessions that never received a message, and child sessions that no parent session references anymore (their parent was deleted or no longer lists them). Preview first; deletion is permanent.",
+                emptyCleanup: "Clean up",
                 emptyNone: "Nothing to clean up",
-                emptyConfirm: "{empty} empty chats and {ghost} ghost sessions will be permanently deleted ({skipped} skipped). This cannot be undone.",
+                emptyConfirm: "Found {empty} empty sessions and {ghost} child sessions with no parent session reference. Confirming deletes them permanently ({skipped} skipped); this cannot be undone.",
                 emptyDeleteConfirm: "Delete permanently",
                 emptyDeleteResult: "Deleted {deleted}, skipped {skipped}, failed {failed}",
-                emptyFailed: "Operation failed: ",
+                emptyFailed: "Cleanup failed: ",
                 cancel: "Cancel",
                 cleanTemp: "Clean temporary artifacts",
                 cleanTempHint: "Send \"清理本项目的临时产物\" as the user",
@@ -1661,7 +1661,7 @@ window.__ModuleLoader__.load({
         const CLEANUP_ROUTE = "api/cockpit/empty-sessions";
         const DOWNLOAD_ROUTE = "api/cockpit/downloads";
 
-        function EmptySessionCleanup({ t, getWorkspaceRegistry }) {
+        function EmptySessionCleanup({ ct, getWorkspaceRegistry }) {
             const [state, setState] = React.useState({ phase: "idle", candidates: [], skipped: 0, error: "", result: null });
 
             const unavailable = () => Object.assign(new Error("cleanup route unavailable"), { routeUnavailable: true });
@@ -1727,7 +1727,7 @@ window.__ModuleLoader__.load({
                     disabled: busy,
                     onClick: preview,
                     style: { ...ghostButtonStyle, padding: "4px 10px", fontSize: 12, opacity: busy ? 0.55 : 1 }
-                }, busy ? "…" : t("emptyCleanup")),
+                }, busy ? "…" : ct("emptyCleanup")),
                 state.phase !== "idle" ? h("span", {
                     role: state.phase === "confirm" ? "alertdialog" : "status",
                     style: {
@@ -1748,24 +1748,31 @@ window.__ModuleLoader__.load({
                     }
                 },
                 state.phase === "loading" ? h("span", null, "…") : null,
-                state.phase === "empty" ? h("span", null, t("emptyNone")) : null,
-                state.phase === "confirm" ? h("span", null, t("emptyConfirm", { empty: state.emptyCount, ghost: state.ghostCount, skipped: state.skipped })) : null,
+                state.phase === "empty" ? h("span", null, ct("emptyNone")) : null,
+                state.phase === "confirm" ? h("span", null, ct("emptyConfirm", { empty: state.emptyCount, ghost: state.ghostCount, skipped: state.skipped })) : null,
                 state.phase === "deleting" ? h("span", null, "…") : null,
-                state.phase === "done" ? h("span", null, t("emptyDeleteResult", {
+                state.phase === "done" ? h("span", null, ct("emptyDeleteResult", {
                     deleted: state.result.deletedSessionIds.length,
                     skipped: state.result.skippedSessionIds.length,
                     failed: state.result.failures.length
                 })) : null,
-                state.phase === "error" ? h("span", null, `${t("emptyFailed")}${state.error}`) : null,
+                state.phase === "error" ? h("span", null, `${ct("emptyFailed")}${state.error}`) : null,
                 h("span", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 } },
-                    state.phase === "confirm" ? h("button", { type: "button", onClick: remove, style: { ...buttonStyle, padding: "5px 10px", fontSize: 12 } }, t("emptyDeleteConfirm")) : null,
-                    h("button", { type: "button", onClick: close, style: { ...ghostButtonStyle, padding: "5px 10px", fontSize: 12 } }, t("cancel"))
+                    state.phase === "confirm" ? h("button", { type: "button", onClick: remove, style: { ...buttonStyle, padding: "5px 10px", fontSize: 12 } }, ct("emptyDeleteConfirm")) : null,
+                    h("button", { type: "button", onClick: close, style: { ...ghostButtonStyle, padding: "5px 10px", fontSize: 12 } }, ct("cancel"))
                 )) : null
             );
         }
 
         // Compact cleanup block rendered at the top of the archive page.
-        function CleanupBlock({ t, getWorkspaceRegistry }) {
+        //
+        // The archive page owns `archive-manager.cleanup` and renders it with
+        // its own props, including a `t` bound to the archive namespace. The
+        // slot renderer spreads those owner props over the registered inject,
+        // so an injected prop named `t` would be replaced by the archive copy
+        // and cockpit keys would fall back to raw strings. `ct` is the cockpit
+        // translator under a name the owner cannot shadow.
+        function CleanupBlock({ ct, getWorkspaceRegistry }) {
             return h("div", {
                 style: {
                     display: "flex",
@@ -1779,10 +1786,10 @@ window.__ModuleLoader__.load({
                 }
             },
             h("div", { style: { flex: "1 1 240px", minWidth: 0 } },
-                h("div", { style: { fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 2 } }, t("cleanupTitle")),
-                h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("cleanupDescription"))
+                h("div", { style: { fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 2 } }, ct("cleanupTitle")),
+                h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, ct("cleanupDescription"))
             ),
-            h(EmptySessionCleanup, { t, getWorkspaceRegistry })
+            h(EmptySessionCleanup, { ct, getWorkspaceRegistry })
             );
         }
 
@@ -3116,11 +3123,17 @@ window.__ModuleLoader__.load({
                             })
                         }, ComposerBar));
 
+                        // The archive page owns this child slot and renders it
+                        // with its own props, including a translator bound to the
+                        // archive namespace. Owner props win over the injected
+                        // props, so cockpit copy is injected as "ct" to keep the
+                        // cockpit dictionary; naming it "t" made the block fall
+                        // back to raw keys such as "cleanupTitle".
                         uiCtx.slots.inject("archive-manager.cleanup", () => uiCtx.slots.register({
                             name: "archive-manager.cleanup",
                             id: "cockpit-cleanup",
                             locale: NS,
-                            inject: () => ({ t, getWorkspaceRegistry })
+                            inject: () => ({ ct: t, getWorkspaceRegistry })
                         }, CleanupBlock));
 
                         const settings = uiCtx.remote?.settings;

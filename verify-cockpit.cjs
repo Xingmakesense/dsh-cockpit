@@ -107,6 +107,15 @@ async function checkClientArtifact() {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
     }
 
+    // The archive page renders its cleanup child slot with the archive locale
+    // t, and owner props win over the registered inject. The cockpit
+    // translator must travel as its own prop so the block cannot fall back to
+    // raw dictionary keys.
+    assert(client.includes("inject: () => ({ ct: t, getWorkspaceRegistry })"),
+        "the archive-page cleanup must inject the cockpit translator as ct");
+    assert(!client.includes("inject: () => ({ t, getWorkspaceRegistry })"),
+        "the archive-page cleanup must not inject t: the archive owner t overrides it and raw keys render");
+
     // Non-public carriers must not leak back into the generated client.
     for (const needle of ["【自动续轮", "agent/request-error", "runtime-context", "api-session/error"]) {
         assert(!client.includes(needle), `client.js still contains a non-public surface: ${needle}`);
@@ -170,7 +179,7 @@ function checkLocaleMeta() {
 function checkManifest() {
     const pkg = JSON.parse(read("./package.json"));
     assert(pkg.name === "dsh-cockpit", "package name must stay dsh-cockpit");
-    assert(pkg.version === "3.4.0", "package.json version must stay 3.4.0");
+    assert(pkg.version === "3.4.1", "package.json version must stay 3.4.1");
     assert(pkg.dsh?.bundle?.patch === "./cordis.patch.yml", "dsh.bundle.patch must point at cordis.patch.yml");
     assert(pkg.dsh?.client?.platform === "web", "dsh.client.platform must stay web");
 

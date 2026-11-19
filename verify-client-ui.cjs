@@ -265,13 +265,37 @@ async function main() {
         "cleanup must not keep its own settings page");
     const cleanupProps = cleanup.definition.inject();
     assert(typeof cleanupProps.getWorkspaceRegistry === "function", "cleanup section must resolve the registry lazily");
-    const cleanupTree = cleanup.component({ ...cleanupProps, t: (key) => key });
-    assert(titledNodes(cleanupTree).length === 0, "the cleanup section must not use native title tooltips");
-    const cleanupNode = findNode(cleanupTree, (node) => typeof node.type === "function" && node.type.name === "EmptySessionCleanup");
-    assert(cleanupNode !== undefined, "cleanup component must be embedded in the archive page header");
-    const cleanupView = cleanupNode.type(cleanupNode.props);
-    const cleanupButton = findNode(cleanupView, (node) => node.type === "button" && textOf(node) === "emptyCleanup");
-    assert(cleanupButton !== undefined, "cleanup button must be rendered");
+    assert(typeof cleanupProps.ct === "function", "cleanup must receive the cockpit translator under its own prop name");
+    assert(!Object.hasOwn(cleanupProps, "t"),
+        "cleanup must not inject t: the archive owner props carry their own t and would override it with raw keys");
+
+    // The archive owner renders this child slot with its own props, including a
+    // t bound to the archive namespace. Simulate that override so a regression
+    // back to an injected t fails here instead of showing raw keys in the GUI.
+    const ownerT = (key) => `archives.${key}`;
+    const translateWith = (dict) => (key, params = {}) =>
+        String(dict[key] ?? key).replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? `{${name}}`));
+    let cleanupButton;
+    for (const [language, dict] of [["zh", locale.dicts.zh], ["en", locale.dicts.en]]) {
+        const cleanupTree = cleanup.component({ ...cleanupProps, ct: translateWith(dict), t: ownerT });
+        assert(titledNodes(cleanupTree).length === 0, "the cleanup section must not use native title tooltips");
+        const rendered = textOf(cleanupTree);
+        assert(rendered.includes(dict.cleanupTitle), `${language} cleanup title must use the cockpit dictionary`);
+        assert(rendered.includes(dict.cleanupDescription), `${language} cleanup description must use the cockpit dictionary`);
+        assert(!rendered.includes("cleanupTitle") && !rendered.includes("cleanupDescription"),
+            `${language} cleanup must not render raw i18n keys when the archive owner supplies its own t`);
+        const cleanupNode = findNode(cleanupTree, (node) => typeof node.type === "function" && node.type.name === "EmptySessionCleanup");
+        assert(cleanupNode !== undefined, "cleanup component must be embedded in the archive page header");
+        assert(typeof cleanupNode.props.ct === "function", "the cleanup child must receive the cockpit translator");
+        const cleanupView = cleanupNode.type(cleanupNode.props);
+        const button = findNode(cleanupView, (node) => node.type === "button" && textOf(node) === dict.emptyCleanup);
+        assert(button !== undefined, `${language} cleanup button must render its localized label`);
+        cleanupButton ??= button;
+    }
+    assert(!/幽灵/.test(locale.dicts.zh.cleanupDescription + locale.dicts.zh.emptyConfirm),
+        "Chinese cleanup copy must explain orphaned subagent sessions without the maintainer-only term");
+    assert(!/ghost sessions?/i.test(locale.dicts.en.cleanupDescription + locale.dicts.en.emptyConfirm),
+        "English cleanup copy must explain orphaned subagent sessions without the maintainer-only term");
     assert(!Object.hasOwn(cleanupButton.props, "title"), "cleanup button must not show a native hover tooltip");
     const realFetch = globalThis.fetch;
     let cleanupRequest;

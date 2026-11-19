@@ -72,6 +72,28 @@
                             inject: () => ({ t, settings })
                         }, SettingsPage));
 
+                        // Full statistics page (host-side projection + aggregation).
+                        uiCtx.slots.inject("settings.section", () => uiCtx.slots.register({
+                            name: "settings.section",
+                            id: "cockpit-statistics",
+                            order: 120,
+                            label: () => t("statsTab"),
+                            locale: NS,
+                            inject: () => ({ t })
+                        }, StatisticsSection));
+
+                        // Better Sidebar diagnostics tab. The peer is optional:
+                        // the tab only appears when ctx.betterSidebar exists.
+                        try {
+                            uiCtx.inject(["betterSidebar"], (sidebarCtx) => {
+                                const service = sidebarCtx.betterSidebar;
+                                if (!service || typeof service.registerTab !== "function") return;
+                                sidebarCtx.effect(() => service.registerTab(createDiagnosticsSidebar({ t, noticeStore, getWorkspaceRegistry })), "dsh-cockpit: diagnostics sidebar tab");
+                            });
+                        } catch (error) {
+                            console.warn("[dsh-cockpit] diagnostics sidebar skipped:", error);
+                        }
+
                         try {
                             uiCtx.effect(() => {
                                 if (typeof document === "undefined" || typeof fetch !== "function") return;

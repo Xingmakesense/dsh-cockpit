@@ -17,6 +17,8 @@ const MODULES = [
     "30-theme.js",
     "40-auto-continue.js",
     "50-composer.js",
+    "60-statistics.js",
+    "70-sidebar.js",
     "90-boot.js"
 ];
 

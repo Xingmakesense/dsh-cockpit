@@ -1,6 +1,6 @@
-# DSH Cockpit v3.3.0
+# DSH Cockpit v3.4.0
 
-DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自动续轮、会话归档与清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计与孤儿附件回收。
+DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自动续轮、会话归档与清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计与孤儿附件回收，以及从 dsh-watcher 原生移植的统计页与排查侧栏。
 
 > 推理强度滑条由独立插件 `dsh-effort-slider` 提供，不属于本包。
 
@@ -37,6 +37,19 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 
 - 每次删除写一行 JSONL：`<DSH_HOME>/storages/cockpit-audit/session-deletions.jsonl`，记录时间、操作者、会话 id 与结果；当前文件与单代轮转文件各限 2 MiB。
 - 每 6 小时扫描一次 `<DSH_HOME>/attachments/v1/objects`，只删除不被任何存活会话引用、且超过 24 小时宽限期的附件对象。
+
+### 统计
+
+- 「设置 → 统计」：Token / 耗时 / 缓存 / 提问 / 轮次 / 工具调用汇总，模型统计表，工具 / Skill / 工作区三榜（纵向全宽，长名称换行不截断），会话列表（可按 Token、总耗时、故障数排序并展开耗时构成），以及按日趋势图（柱状堆叠 / 平滑折线）。
+- 数据来自 Host 侧 `cockpitInsights` 投影：fold 与 wire view 直接复用 vendored 的 `engine.mjs`（`stateVersion 5` 与 wire 形状与 dsh-watcher 一致；投影 key 使用独立的 `cockpitInsights`，可与已安装的 dsh-watcher 并存），统计页只渲染按时间范围聚合后的结果。
+- 投影是**懒安装**的：启动阶段不遍历会话、不预热；第一次请求 `GET /api/cockpit/stats` 时才注册投影，并且只对当前存活会话做快照，其余会话在宿主附着后再计入。
+- 同源路由：`GET /api/cockpit/stats?range=7&fields=summary`；`fields=full` 会带上原始 wire view 数组，`sessionId=...` 只处理指定的单个会话。
+
+### 排查侧栏
+
+- 在支持 `ctx.betterSidebar` 的宿主里注册「排查」页签；宿主没有该服务时自动跳过，不影响其他功能。
+- 只放排查内容：错误会话列表、工具报错聚合、模型失败原因（来自官方 `llm/retry` / `turn/end` 事件的观测记录与续轮提示），以及引擎记录的重复失败证据。
+- 会话诊断 / 修复直接复用归档层的 `remote.workspaceRegistry.diagnoseSession` / `repairSession` / `sessionDetails`，不新增修复实现；修复要求会话已归档且未在宿主内打开，旧日志原样保留。
 
 ## 环境要求
 
@@ -91,7 +104,8 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 - `archive.js` + `vendor/archive-manager/`：归档页、删除与恢复；Vendored 代码只使用 DSH 运行时提供的核心包。
 - `maintenance.js`：删除审计与孤儿附件清理；自带 zstd 帧解码器，不再借用归档模块。
 - `downloads.js`：下载字节观测与同源快照路由；只使用 Node 内置模块。
-- `scripts/client/`：按功能拆分的客户端模块（shell、downloads、cleanup、theme、auto-continue、composer、boot），共享同一个 Loader factory，不引入第三方 npm 依赖。
+- `stats.js` + `vendor/watcher-insights/`：懒安装的 `cockpitInsights` 投影、统计聚合与同源统计路由；`engine.mjs` / `presentation.mjs` / `calendar.mjs` 从 dsh-watcher 原样复制（MIT），没有新增 npm 依赖。
+- `scripts/client/`：按功能拆分的客户端模块（shell、downloads、cleanup、theme、auto-continue、composer、statistics、sidebar、boot），共享同一个 Loader factory，不引入第三方 npm 依赖。
 
 因此单个功能可以独立维护或拆分出去，不会因其他功能的改动而失效。
 
@@ -103,10 +117,11 @@ auto-continue.js    官方 retryPolicy 覆盖层与 Config
 archive.js          挂载 vendored 归档 host
 maintenance.js      删除审计 + 孤儿附件清理
 downloads.js        Host 下载字节观测与进度快照
+stats.js            Host 懒投影 + 统计聚合 + 同源统计路由
 client.js           客户端产物（生成物，勿手改）
 scripts/            客户端生成脚本与发布脚本
 scripts/client/     按功能拆分的客户端模块
-vendor/             vendored 归档实现与 schemastery/cosmokit 副本
+vendor/             vendored 归档实现、watcher-insights 副本与 schemastery/cosmokit
 verify-*.cjs        回归测试
 MAINTAINERS.md      维护手册
 ```
@@ -120,6 +135,7 @@ node verify-archive.cjs
 node verify-client-ui.cjs
 node verify-downloads.cjs
 node verify-maintenance.cjs
+node verify-stats.cjs
 node verify-theme-tokens.cjs
 ```
 
@@ -144,6 +160,7 @@ node scripts/build-client.mjs --check && node --check host.js && node --check au
 - 本项目：MIT，见 [LICENSE](LICENSE)
 - `vendor/archive-manager`：Apache-2.0（保留原始 LICENSE，修改说明见 `vendor/archive-manager/MODIFICATIONS.md`）
 - `vendor/schemastery.mjs`、`vendor/cosmokit.mjs`：MIT 副本（见 `vendor/LICENSE.schemastery`、`vendor/LICENSE.cosmokit`）
+- `vendor/watcher-insights/`：dsh-watcher 的 `engine.mjs`、`presentation.mjs`、`calendar.mjs` 原样副本（MIT，见 `vendor/watcher-insights/LICENSE`）
 
 ## 容易踩的坑
 
@@ -157,3 +174,4 @@ node scripts/build-client.mjs --check && node --check host.js && node --check au
 8. **进度与提示只走同源快照。** 下载卡片与续轮提示都由 Host 的 `connection.fetch.register` 路由提供、客户端轮询；不要借用内部事件 relay，也不要在无 `Content-Length` 时伪造百分比。
 9. **按钮位置认准 dock 槽。** `conversation.input.dock` 在输入框卡片上方；`conversation.input.left/right/overlay/activity` 在卡片内侧。发送用户消息用 `prompt(..., "queue")`，不要自己构造 inbox 消息。
 10. **安装只替换文件。** 客户端变更需刷新页面，host 变更需完全重启 DSH；只刷新页面时 host 侧不会更新。
+11. **统计投影必须懒安装。** 不要在 `apply` 或 `ctx.inject` 回调里遍历 `sessionProjections.snapshot` 预热会话；第一次 `GET /api/cockpit/stats` 才注册投影并扫描所需会话，否则启动会因全量 replay 卡顿。

@@ -1,11 +1,12 @@
 /**
  * dsh-cockpit host entry.
  *
- * Four responsibilities, one file each:
+ * Five responsibilities, one file each:
  *  - `auto-continue.js`  — official `agent/request-error` recovery layer.
  *  - `archive.js`        — mounts the vendored session-archive host.
  *  - `maintenance.js`    — deletion audit + orphan attachment sweep.
  *  - `downloads.js`      — passive download progress observation and events.
+ *  - `stats.js`          — lazy watcher-insights projection + statistics route.
  *
  * Auto-continue is implemented only on documented seams: the
  * `agent/request-error` waterfall, the native Config/settings service and a
@@ -16,6 +17,7 @@ import { Config, installAutoContinue } from "./auto-continue.js";
 import { installArchiveHost } from "./archive.js";
 import { installMaintenance } from "./maintenance.js";
 import { installDownloads } from "./downloads.js";
+import { installStats } from "./stats.js";
 
 export { Config };
 export const name = "cockpit";
@@ -52,5 +54,11 @@ export function apply(ctx, config) {
         installDownloads(ctx);
     } catch (error) {
         warn(ctx, `download observation skipped: ${error?.message ?? String(error)}`);
+    }
+
+    try {
+        installStats(ctx);
+    } catch (error) {
+        warn(ctx, `statistics skipped: ${error?.message ?? String(error)}`);
     }
 }

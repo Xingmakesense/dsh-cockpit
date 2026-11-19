@@ -6,14 +6,16 @@
 
 | 文件 | 职责 | 不应做什么 |
 |---|---|---|
-| `host.js` | 入口，只组装续轮、归档、维护与下载安装 | 不写业务逻辑、不写 UI 文案 |
+| `host.js` | 入口，只组装续轮、归档、维护、下载与统计安装 | 不写业务逻辑、不写 UI 文案 |
 | `auto-continue.js` | 官方 `agent/request-error` 上的 `retryPolicy` 覆盖、Config、提示快照路由 | 不自己执行重试、不写 transcript、不碰归档/文件系统 |
 | `archive.js` | 通过 `ctx.inject` 挂载 vendored 归档 host，并注册空对话清理路由 | 不复制 vendored 逻辑 |
 | `maintenance.js` | 删除审计落盘与轮转、孤儿附件清扫、定时器 | 不改会话/归档状态 |
 | `downloads.js` | Host 下载字节观测、文件名解析与同源快照路由 | 不拦截保存路径，不重复下载文件 |
+| `stats.js` | 懒安装的 `cockpitInsights` 投影、范围聚合与同源统计路由；同时观测 `llm/retry` / `turn/end` 失败原因供排查页签使用 | 不预热会话、不改 engine fold、不重算 JSONL |
 | `client.js` | 生成物，勿手改 | — |
-| `scripts/client/` | 按功能拆分的客户端模块：`00-shell`、`10-downloads`、`20-cleanup`、`30-theme`、`40-auto-continue`、`50-composer`、`90-boot` | 不写续轮状态机或归档 Host 逻辑；模块之间不互相导入；改完运行 `node scripts/build-client.mjs` |
+| `scripts/client/` | 按功能拆分的客户端模块：`00-shell`、`10-downloads`、`20-cleanup`、`30-theme`、`40-auto-continue`、`50-composer`、`60-statistics`、`70-sidebar`、`90-boot` | 不写续轮状态机或归档 Host 逻辑；模块之间不互相导入；改完运行 `node scripts/build-client.mjs` |
 | `vendor/archive-manager/` | 归档实现（Apache-2.0） | 不与仓库其他部分循环依赖 |
+| `vendor/watcher-insights/` | dsh-watcher 的 `engine.mjs` / `presentation.mjs` / `calendar.mjs` 原样副本（MIT）与本地 `analytics.mjs` | engine 的 fold/reduce 与 wire view 不得改写；升级时整体替换 |
 | `vendor/schemastery.mjs`、`vendor/cosmokit.mjs` | Config 使用的原生 schema 副本（MIT） | 仅替换 import 路径，不改实现 |
 
 ## 2. 关键契约（改代码前必读）
@@ -30,6 +32,7 @@
 10. **空对话清理与级联删除**：`previewEmptySessions` 只读，`deleteEmptySessions` 在确认后重新校验；删除父会话时通过 `collectSubagentDescendants` 收集全部层级 `origin: "subagent"` 后代并逐个删除，结果以 `cascadedSessionIds` 返回；fork 分支（`isSeeded`）不连带删除。
 11. **缓存性能**：存活会话集合每次迁移/清扫最多读取一次 `sessionPersistence.list()`；孤儿行在各自域内批量删除，不得按候选逐个 `stat()`。
 12. **下载观测**：只在 `connection/request` 的响应包装中统计字节，必须调用原 `next()` 并保持原响应内容、背压和保存流程；无 `Content-Length` 时不得伪造百分比。
+13. **统计投影必须懒安装。** `stats.js` 在 `GET /api/cockpit/stats` 第一次被请求时才 `ctx.inject(['sessionProjections','sessions'])` 并注册 `cockpitInsights`；注册本身不 replay，扫描只对 `sessions.list()` 中的存活会话做快照。不要在 `apply` 或注入回调里遍历会话预热，否则启动会卡顿。投影 key 固定 `cockpitInsights`、`stateVersion 5`，wire view 由 vendored `viewOf` 产出；统计页与侧栏只消费聚合结果。
 
 ### 2.1 样式只能使用 DSH 已定义的变量
 
@@ -63,6 +66,7 @@
 | `node verify-client-ui.cjs` | stub loader 评估 `client.js`：续轮提示、设置页、归档页顶部清理块、按钮发送路径与主题 token |
 | `node verify-downloads.cjs` | Host 附件响应包装、真实字节计数、文件名/后缀、完成状态与快照 |
 | `node verify-maintenance.cjs` | 审计落盘、附件引用/孤儿/宽限期、多帧与损坏 zstd、空 home 安全阀 |
+| `node verify-stats.cjs` | vendored engine/presentation/calendar 原样哈希、懒注册、统计聚合、失败观测与客户端统计/侧栏登记 |
 | `node verify-theme-tokens.cjs` | `scripts/client/` 模块只引用 DSH 真实存在的 `--dsw-*` 变量；两套主题对比度达标 |
 
 发布前全部检查全绿，并执行 `node scripts/build-client.mjs --check`、`node --check host.js`、`node --check auto-continue.js`、`node --check client.js`。
@@ -80,7 +84,7 @@
    ```
 
 6. 安装到测试 profile，完全重启 DSH；
-7. 验证：设置 → 插件 → 自动续轮可读写；归档页顶部清理块可预览/删除；右键菜单「删除会话」可用；输入框上方按钮能发出消息；下载时显示卡片；
+7. 验证：设置 → 插件 → 自动续轮可读写；设置 → 统计可切换范围并刷新；Better Sidebar 的「排查」页签能诊断/修复；归档页顶部清理块可预览/删除；右键菜单「删除会话」可用；输入框上方按钮能发出消息；下载时显示卡片；
 8. 提交（Conventional Commits）并打 tag。
 
 ## 6. 更新 vendored 归档实现
@@ -105,6 +109,13 @@
 Reflect.get(Config, Symbol.for("schemastery")) === true
 Config.meta.volatile === true
 ```
+
+## 7.1 更新 watcher-insights 副本
+
+1. 从 dsh-watcher 取 `src/insights/engine.mjs`、`presentation.mjs`、`calendar.mjs` 与 `LICENSE`，原样覆盖 `vendor/watcher-insights/`；
+2. 不改 engine 的 fold/reduce、key 或 `stateVersion`，也不改 `viewOf` 产出的 wire 形状；
+3. 若上游升级了 `stateVersion`，需同步 `stats.js` 的 `STATS_STATE_VERSION`，并接受旧缓存失效（版本不匹配会被投影缓存丢弃）；
+4. 更新 `verify-stats.cjs` 里的三个 SHA-256 快照，并重跑 `npm test` 与 `node scripts/build-client.mjs --check`。
 
 ## 8. 排错
 

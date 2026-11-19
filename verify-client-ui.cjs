@@ -109,10 +109,21 @@ async function main() {
             deleteEmptySessions: async () => ({ requestedSessionIds: [], deletedSessionIds: [], skippedSessionIds: [], failures: [] })
         }
     };
+    const sidebarTabs = [];
     const ctx = {
         plugin: (plugin) => plugins.push(plugin),
         remote,
         sessions,
+        betterSidebar: {
+            registerTab(descriptor) {
+                sidebarTabs.push(descriptor);
+                return () => {};
+            }
+        },
+        inject(_dependencies, callback) {
+            callback(ctx);
+            return () => {};
+        },
         effect(fn) {
             const dispose = fn();
             return typeof dispose === "function" ? dispose : () => {};
@@ -205,7 +216,8 @@ async function main() {
     const cleanup = registrations.find((entry) => entry.definition.name === "archive-manager.cleanup");
     assert(cleanup !== undefined, "empty-session cleanup must register into the archive page header");
     assert(cleanup.definition.id === "cockpit-cleanup", "cleanup block id changed");
-    assert(!registrations.some((entry) => entry.definition.name === "settings.section"), "cleanup must not keep its own settings page");
+    assert(!registrations.some((entry) => entry.definition.name === "settings.section" && entry.definition.id === "cockpit-cleanup"),
+        "cleanup must not keep its own settings page");
     const cleanupProps = cleanup.definition.inject();
     assert(typeof cleanupProps.getWorkspaceRegistry === "function", "cleanup section must resolve the registry lazily");
     const cleanupTree = cleanup.component({ ...cleanupProps, t: (key) => key });
@@ -263,6 +275,39 @@ async function main() {
     assert(prompts[0].mode === "queue", "the message must use the normal queue mode");
     assert(prompts[0].content.length === 1 && prompts[0].content[0].type === "text", "the message must be plain text");
     assert(prompts[0].content[0].text === "清理本项目的临时产物", "the message text must stay exact and unlocalized");
+
+    // Statistics page: settings.section registered by the cockpit UI.
+    const statsSection = registrations.find((entry) => entry.definition.name === "settings.section" && entry.definition.id === "cockpit-statistics");
+    assert(statsSection !== undefined, "statistics must register a settings.section page");
+    assert(statsSection.definition.order === 120, "statistics section order changed");
+    assert(statsSection.definition.label() === "dsh-cockpit.statsTab", "statistics section label must be localized");
+    const statsTree = statsSection.component({ ...statsSection.definition.inject(), t: (key) => key });
+    assert(textOf(statsTree).includes("statsLoading"), "the statistics page must render its loading state");
+    assert(titledNodes(statsTree).length === 0, "the statistics page must not use native title tooltips");
+
+    // Better Sidebar diagnostics tab: only registered through ctx.betterSidebar.
+    assert(sidebarTabs.length === 1, "the diagnostics tab must register through ctx.betterSidebar exactly once");
+    assert(sidebarTabs[0].id === "cockpit-diagnostics", "the diagnostics tab id changed");
+    assert(sidebarTabs[0].title === "dsh-cockpit.sidebarTitle", "the diagnostics tab title must be localized");
+    assert(sidebarTabs[0].single === true, "the diagnostics tab must be single-instance");
+    const sidebarTree = sidebarTabs[0].component({ ctx, scope: { sessionId: "session-1" }, visible: false });
+    assert(textOf(sidebarTree).includes("dsh-cockpit.sidebarHidden"), "a hidden diagnostics tab must not load data");
+    assert(titledNodes(sidebarTree).length === 0, "the diagnostics tab must not use native title tooltips");
+
+    // Generated bundle must carry the statistics route and both registrations.
+    const bundle = readFileSync(join(__dirname, "client.js"), "utf8");
+    for (const needle of [
+        "api/cockpit/stats",
+        'name: "settings.section"',
+        'id: "cockpit-statistics"',
+        "cockpit-diagnostics",
+        "createDiagnosticsSidebar",
+        "diagnoseSession",
+        "repairSession",
+        "sessionDetails"
+    ]) {
+        assert(bundle.includes(needle), "client.js lost statistics/diagnostics surface: " + needle);
+    }
 
     console.log("all client UI checks passed");
 }

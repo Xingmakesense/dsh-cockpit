@@ -11,7 +11,6 @@
 | `archive.js` | 通过 `ctx.inject` 挂载 vendored 归档 host，并注册空对话清理路由 | 不复制 vendored 逻辑 |
 | `maintenance.js` | 删除审计落盘与轮转、孤儿附件清扫、定时器 | 不改会话/归档状态 |
 | `downloads.js` | Host 下载字节观测、文件名解析与同源快照路由 | 不拦截保存路径，不重复下载文件 |
-| `queue-flush.js` | 轮次结束后在开关开启、Agent 空闲且 inbox 有排队 next-turn 时唤醒官方 driver | 不改写/重排/删除队列内容，不伪造用户消息 |
 | `stats.js` | 懒安装的 `cockpitInsights` 投影、范围聚合与同源统计路由；同时观测 `llm/retry` / `turn/end` 失败原因供排查页签使用 | 不预热会话、不改 engine fold、不重算 JSONL |
 | `client.js` | 生成物，勿手改 | — |
 | `scripts/client/` | 按功能拆分的客户端模块：`00-shell`、`10-downloads`、`20-cleanup`、`30-theme`、`40-auto-continue`、`50-composer`、`60-statistics`、`70-sidebar`、`90-boot` | 不写续轮状态机或归档 Host 逻辑；模块之间不互相导入；改完运行 `node scripts/build-client.mjs` |
@@ -34,8 +33,6 @@
 11. **缓存性能**：存活会话集合每次迁移/清扫最多读取一次 `sessionPersistence.list()`；孤儿行在各自域内批量删除，不得按候选逐个 `stat()`。
 12. **下载观测**：只在 `connection/request` 的响应包装中统计字节，必须调用原 `next()` 并保持原响应内容、背压和保存流程；无 `Content-Length` 时不得伪造百分比。
 13. **统计投影必须懒安装。** `stats.js` 在 `GET /api/cockpit/stats` 第一次被请求时才 `ctx.inject(['sessionProjections','sessions'])` 并注册 `cockpitInsights`；注册本身不 replay，扫描只对 `sessions.list()` 中的存活会话做快照。不要在 `apply` 或注入回调里遍历会话预热，否则启动会卡顿。投影 key 固定 `cockpitInsights`、`stateVersion 5`，wire view 由 vendored `viewOf` 产出；统计页与侧栏只消费聚合结果。
-15. **排队提示词由官方 inbox 消费。** `queue-flush.js` 只在 `turn/end` 后、开关开启、Agent 空闲且 `inbox.nextTurn` 非空时调用一次 `agent.wakeDriver()`；不直接发送、编辑、删除或重排队列项。不要绕过官方 driver 自行 `followup`，否则会重复入队。
-
 14. **注入到他人子槽的 prop 不能叫 `t`。** 归档页用自身 owner props 调 `renderSlot`，同名 `t` 会覆盖注入的 cockpit `locale.t`，清理块曾因此显示 `cleanupTitle` 原始 key；清理块改用独立 prop `ct`，新增子槽组件沿用这个约定。
 
 ### 2.1 样式只能使用 DSH 已定义的变量
@@ -54,7 +51,6 @@
 | `enabled` | `false`（patch 设为 `true`） | 是否覆盖官方重试策略 |
 | `providerRetryMaxRetries` | `3` | 覆盖后的 `retryPolicy.maxRetries`，对所有提供方生效 |
 | `maxAttempts` | `6` | 官方重试结束后额外续轮次数 |
-| `autoFlushQueue` | `false` | 轮次停止后自动唤醒官方 inbox 消费排队提示词 |
 | `delayMs` | `1500` | 覆盖后的 `initialDelayMs` |
 | `emitProminentError` | `true` | 是否发布提示快照 |
 | `retryableCodes` / `blockedCodes` | 见 `CONTINUE_DEFAULTS` | 参与/不参与重试的故障码 |

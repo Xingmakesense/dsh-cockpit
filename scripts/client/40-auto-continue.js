@@ -90,7 +90,6 @@
                 providerRetryMaxRetries: Number.isFinite(source.providerRetryMaxRetries) ? source.providerRetryMaxRetries : 3,
                 maxAttempts: Number.isFinite(source.maxAttempts) ? source.maxAttempts : 6,
                 delayMs: Number.isFinite(source.delayMs) ? source.delayMs : 1500,
-                autoFlushQueue: source.autoFlushQueue === true,
                 emitProminentError: source.emitProminentError !== false
             };
         }
@@ -141,7 +140,7 @@
                 try {
                     const ops = [];
                     const current = pickValues(state.view.value);
-                    for (const key of ["enabled", "emitProminentError", "autoFlushQueue", "providerRetryMaxRetries", "maxAttempts", "delayMs"]) {
+                    for (const key of ["enabled", "emitProminentError", "providerRetryMaxRetries", "maxAttempts", "delayMs"]) {
                         if (state.draft[key] !== current[key]) ops.push({ op: "set", path: [key], value: state.draft[key] });
                     }
                     if (ops.length === 0) {
@@ -216,12 +215,7 @@
                             h("input", { type: "checkbox", checked: draft.emitProminentError, onChange: (event) => set("emitProminentError", event.target.checked) }),
                             h("span", { style: { fontSize: 13 } }, t("prominent"))
                         ),
-                        h("label", { style: { display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginTop: 12 } },
-                            h("input", { type: "checkbox", checked: draft.autoFlushQueue, onChange: (event) => set("autoFlushQueue", event.target.checked) }),
-                            h("span", { style: { fontSize: 13 } }, t("autoFlushQueue"))
-                        ),
-                        h("div", { style: { marginTop: 6, fontSize: 12, lineHeight: 1.6, color: THEME.textSecondary } },
-                            t("autoFlushQueueHint")),
+
                         h("div", { style: { marginTop: 14, fontSize: 12, lineHeight: 1.6, color: THEME.textSecondary } },
                             t("retryHint", { provider: draft.providerRetryMaxRetries, max: draft.maxAttempts }))
                     )

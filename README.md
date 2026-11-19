@@ -1,4 +1,4 @@
-# DSH Cockpit v3.5.0
+# DSH Cockpit v3.5.1
 
 DSH Cockpit 是 DeepSeek Harness 的一体化会话工作台插件：把自动续轮、会话归档与空会话清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计、统计页和排查侧栏收进同一个包。Host 与 Client 都按功能拆分，每个模块只做一件事，彼此不互相导入。
 
@@ -13,13 +13,6 @@ DSH Cockpit 是 DeepSeek Harness 的一体化会话工作台插件：把自动�
 - 续轮在当前步骤内完成，不写入任何对话消息。
 - `AUTH` / `QUOTA` / `BAD_REQUEST` 等不可自愈故障不参与重试，原始错误直接保留。
 - 设置入口：设置 → 插件 → 自动续轮；可配置启用开关、单次请求重试次数、额外续轮次数、续轮延迟和提示开关，页面底部实时显示“最多尝试次数”。
-
-### 排队提示词自动发送
-
-- 在「设置 → 插件 → 自动续轮」里新增开关「会话结束后自动发送排队的提示词」。
-- 开启后，当前轮次停止输出时，如果 Agent 已空闲且 inbox 里还有排队的 next-turn 提示词，就唤醒官方 driver 继续消费队列；顺序完全由官方 inbox 决定，不重排、不删除、不重复发送。
-- 关闭时完全不介入官方队列行为。
-- 该功能独立在 `queue-flush.js`，只读取 `auto-continue` 的实时配置，不写队列内容。
 
 ### 会话管理
 
@@ -81,7 +74,6 @@ DSH Cockpit 是 DeepSeek Harness 的一体化会话工作台插件：把自动�
 | `enabled` | `true`（随包 patch） | 是否覆盖官方重试策略 |
 | `providerRetryMaxRetries` | `3` | 单次请求重试次数，覆盖官方 `retryPolicy.maxRetries`（0–10） |
 | `maxAttempts` | `6` | 官方重试结束后额外续轮次数（1–50） |
-| `autoFlushQueue` | `false` | 轮次停止后自动唤醒官方 inbox，消费排队的提示词 |
 | `delayMs` | `1500` | 额外续轮前的等待时间（毫秒） |
 | `emitProminentError` | `true` | 是否显示续轮提示 |
 | `retryableCodes` | `TRANSPORT`/`TIMEOUT`/`RATE_LIMIT`/`SERVER`/`EMPTY_RESPONSE`/`UNKNOWN` | 参与重试的故障码 |
@@ -110,7 +102,6 @@ DSH Cockpit 是 DeepSeek Harness 的一体化会话工作台插件：把自动�
 - `archive.js` + `vendor/archive-manager/`：归档页、删除与恢复；vendored 代码只使用 DSH 运行时提供的核心包。
 - `maintenance.js`：删除审计与孤儿附件清理；自带 zstd 帧解码器，不借用归档模块。
 - `downloads.js`：下载字节观测与同源快照路由；只使用 Node 内置模块。
-- `queue-flush.js`：轮次结束后唤醒官方 inbox，按原顺序消费排队提示词；不修改队列内容。
 - `stats.js` + `vendor/watcher-insights/`：懒安装的 `cockpitInsights` 投影、统计聚合与同源统计路由；`engine.mjs` / `presentation.mjs` / `calendar.mjs` 从 dsh-watcher 原样复制（MIT），没有新增 npm 依赖。
 - `scripts/client/`：按功能拆分的客户端模块（shell、downloads、cleanup、theme、auto-continue、composer、statistics、sidebar、boot），共享同一个 Loader factory，不引入第三方 npm 依赖。
 
@@ -125,7 +116,6 @@ archive.js          挂载 vendored 归档 host
 maintenance.js      删除审计 + 孤儿附件清理
 downloads.js        Host 下载字节观测与进度快照
 stats.js            Host 懒投影 + 统计聚合 + 同源统计路由
-queue-flush.js     轮次结束后唤醒官方 inbox 消费排队提示词
 client.js           客户端产物（生成物，勿手改）
 scripts/            客户端生成脚本与发布脚本
 scripts/client/     按功能拆分的客户端模块
@@ -150,7 +140,6 @@ node verify-client-ui.cjs
 node verify-downloads.cjs
 node verify-maintenance.cjs
 node verify-stats.cjs
-node verify-queue-flush.cjs
 node verify-theme-tokens.cjs
 ```
 

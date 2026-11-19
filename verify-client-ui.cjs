@@ -212,7 +212,7 @@ async function main() {
 
     const locale = locales.find((entry) => entry.ns === "dsh-cockpit");
     assert(locale !== undefined, "cockpit locale namespace must be registered");
-    for (const key of ["cleanupTitle", "cleanupDescription", "cleanTemp", "cleanTempHint", "emptyCleanup", "emptyDeleteConfirm", "tab", "noticeRetry", "noticeExtra", "noticeHalt", "noticeBlocked", "retryHint", "formulaTitle", "formula", "requestUnit", "maxAttempts", "providerRetryMaxRetries", "autoFlushQueue", "autoFlushQueueHint"]) {
+    for (const key of ["cleanupTitle", "cleanupDescription", "cleanTemp", "cleanTempHint", "emptyCleanup", "emptyDeleteConfirm", "tab", "noticeRetry", "noticeExtra", "noticeHalt", "noticeBlocked", "retryHint", "formulaTitle", "formula", "requestUnit", "maxAttempts", "providerRetryMaxRetries"]) {
         assert(typeof locale.dicts.zh[key] === "string" && typeof locale.dicts.en[key] === "string", `locale dictionaries need ${key}`);
     }
 
@@ -315,7 +315,7 @@ async function main() {
     const dock = registrations.find((entry) => entry.definition.name === "conversation.input.dock");
     assert(dock !== undefined, "the temporary-artifact button must register above the composer");
     assert(dock.definition.id === "cockpit-composer-bar", "composer row id changed");
-    assert(dock.definition.order === 80, "composer row order changed");
+    assert(dock.definition.order === 10, "composer row must sit above the official queue dock (order 20)");
     const dockProps = dock.definition.inject("session-1");
     assert(typeof dockProps.send === "function", "composer row must receive its send action");
     assert(dockProps.store !== undefined, "composer row must receive the notice store");

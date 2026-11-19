@@ -46,7 +46,7 @@
                         uiCtx.slots.inject("conversation.input.dock", () => uiCtx.slots.register({
                             name: "conversation.input.dock",
                             id: "cockpit-composer-bar",
-                            order: 80,
+                            order: 10,
                             locale: NS,
                             inject: (sessionId) => ({
                                 t,

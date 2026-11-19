@@ -19,7 +19,6 @@ const CONTINUE_DEFAULTS = {
     enabled: false,
     providerRetryMaxRetries: 3,
     maxAttempts: 6,
-    autoFlushQueue: false,
     delayMs: 1_500,
     retryableCodes: ["TRANSPORT", "TIMEOUT", "RATE_LIMIT", "SERVER", "EMPTY_RESPONSE", "UNKNOWN"],
     blockedCodes: ["AUTH", "AUTHENTICATION", "UNAUTHORIZED", "QUOTA", "ACCOUNT", "SIGN_IN", "SIGNIN", "BAD_REQUEST", "INVALID_REQUEST"],
@@ -51,8 +50,6 @@ export const Config = z.object({
     providerRetryMaxRetries: z.number().min(0).max(10).default(CONTINUE_DEFAULTS.providerRetryMaxRetries),
     /** Extra provider-independent continuations after the official budget is spent. */
     maxAttempts: z.number().min(1).max(50).default(CONTINUE_DEFAULTS.maxAttempts),
-    /** Send the agent's queued next-turn prompts after the current turn ends. */
-    autoFlushQueue: z.boolean().default(CONTINUE_DEFAULTS.autoFlushQueue),
     delayMs: z.number().min(0).max(60_000).default(CONTINUE_DEFAULTS.delayMs),
     emitProminentError: z.boolean().default(CONTINUE_DEFAULTS.emitProminentError),
     retryableCodes: z.array(z.string()).default(CONTINUE_DEFAULTS.retryableCodes),
@@ -75,7 +72,6 @@ export function normalizeContinueConfig(config) {
         maxAttempts: typeof c.maxAttempts === "number" && c.maxAttempts >= 1
             ? Math.floor(c.maxAttempts)
             : CONTINUE_DEFAULTS.maxAttempts,
-        autoFlushQueue: c.autoFlushQueue === true,
         delayMs: typeof c.delayMs === "number" && c.delayMs >= 0 ? c.delayMs : CONTINUE_DEFAULTS.delayMs,
         retryableCodes: strArr(c.retryableCodes, CONTINUE_DEFAULTS.retryableCodes).map((code) => String(code).toUpperCase()),
         blockedCodes: strArr(c.blockedCodes, CONTINUE_DEFAULTS.blockedCodes).map((code) => String(code).toUpperCase()),
@@ -344,10 +340,6 @@ export function installAutoContinue(ctx, config) {
         })
     ];
 
-    // The queue-flush feature shares this reader; it is not a public API.
-    // @returns {() => object} live normalized config
-    const readLiveConfig = readConfig;
-
     ctx.effect(() => () => {
         for (const dispose of disposers) {
             try {
@@ -396,6 +388,4 @@ export function installAutoContinue(ctx, config) {
         /* logging must never block installation */
     }
 
-    // Shared with the queue-flush feature; not a public package API.
-    return readLiveConfig;
 }

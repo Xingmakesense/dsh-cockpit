@@ -33,8 +33,9 @@ async function checkHostEntry() {
     const engine = readOrNull("./auto-continue.js");
     assert(engine !== null, "auto-continue.js must exist");
     assert(engine.includes('ctx.on("agent/request-error"'), "auto-continue must hook agent/request-error");
-    assert(engine.includes("kind: \"retry\""), "auto-continue must return the official retry action");
-    assert(!engine.includes("payload.retryPolicy") && !/retryPolicy\s*=/.test(engine), "auto-continue must not rewrite the official retry policy");
+    assert(engine.includes("payload.retryPolicy = resolveRetryPolicy"), "auto-continue must override the official retry policy on the payload");
+    assert(engine.includes("prepend: true"), "the override must run before the official retry listener");
+    assert(engine.includes('"llm/retry"'), "notices must observe the official retry event");
     for (const needle of ["runtime-context", "api-session/error", "followup("]) {
         assert(!engine.includes(needle), `auto-continue must not use the non-public surface: ${needle}`);
     }
@@ -78,7 +79,7 @@ function checkClientArtifact() {
         assert(client.includes(needle), `client.js lost required surface: ${needle}`);
     }
 
-    // Cockpit UI (3.0.0): download card, cleanup settings section and the
+    // Cockpit UI: download card, cleanup settings section and the
     // right-aligned composer button that sends an ordinary user message.
     for (const needle of [
         'id: "cockpit-download-activity"',
@@ -164,7 +165,7 @@ function checkLocaleMeta() {
 function checkManifest() {
     const pkg = JSON.parse(read("./package.json"));
     assert(pkg.name === "dsh-cockpit", "package name must stay dsh-cockpit");
-    assert(pkg.version === "3.0.0", "removing auto-continue is a breaking release: version must be 3.0.0");
+    assert(pkg.version === "3.1.0", "package.json version must stay 3.1.0");
     assert(pkg.dsh?.bundle?.patch === "./cordis.patch.yml", "dsh.bundle.patch must point at cordis.patch.yml");
     assert(pkg.dsh?.client?.platform === "web", "dsh.client.platform must stay web");
 

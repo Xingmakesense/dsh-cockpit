@@ -1,17 +1,20 @@
 /**
  * dsh-cockpit auto-continue half.
  *
- * Built only on the official model-request recovery seam:
- * `agent/request-error` (a documented waterfall). DSH's own llm-retry plugin
- * owns provider-configured retries, so this listener delegates with `next()`
- * first and only adds provider-independent attempts after that policy gives
- * up. A retry reuses the open step and the already-prepared request assembly:
- * it writes no transcript message, needs no synthetic runtime context and
- * uses no internal event relay.
+ * Overrides the official provider retry policy through the documented
+ * `agent/request-error` waterfall: the listener runs first (`prepend`),
+ * replaces `payload.retryPolicy` with this plugin's resolved policy, and
+ * delegates with `next()`. The shipped `dsh-llm-retry` plugin then performs
+ * the retries with that policy, so all recovery and backoff stay on official
+ * controls while the budget, codes and delay belong to this plugin.
+ *
+ * Progress and terminal states are observed from the official durable
+ * `llm/retry` / `turn/end` session events and exposed to the Client through
+ * one same-origin snapshot route.
  */
 import z from "./vendor/schemastery.mjs";
 
-/** Defaults mirror the previous user-visible behaviour. */
+/** Defaults. */
 const CONTINUE_DEFAULTS = {
     enabled: false,
     maxAttempts: 6,
@@ -43,13 +46,7 @@ export const Config = z.object({
     delayMs: z.number().min(0).max(60_000).default(CONTINUE_DEFAULTS.delayMs),
     emitProminentError: z.boolean().default(CONTINUE_DEFAULTS.emitProminentError),
     retryableCodes: z.array(z.string()).default(CONTINUE_DEFAULTS.retryableCodes),
-    blockedCodes: z.array(z.string()).default(CONTINUE_DEFAULTS.blockedCodes),
-    /**
-     * Deprecated compatibility key: provider-level retry budgets are owned by
-     * the official provider `retryPolicy` and `dsh-llm-retry`. Accepted so old
-     * profile patches keep parsing, then ignored.
-     */
-    providerRetryMaxRetries: z.number().min(0).max(10).default(0)
+    blockedCodes: z.array(z.string()).default(CONTINUE_DEFAULTS.blockedCodes)
 }).volatile();
 
 /**
@@ -103,7 +100,7 @@ const HTTP_FAILURE_CODES = {
 /** Explicitly non-recoverable quota wording, independent of provider/model. */
 const HARD_QUOTA_RE = /insufficient[ _-]?(?:balance|funds)|quota\s+(?:is\s+)?exhausted|usage\s+limit|free\s+quota|recharge|wallet|余额不足|额度(?:不足|耗尽|已用完)|钱包余额|充值后继续使用/iu;
 
-/** Normalize one official `LlmFailure` into the code/message pair used by the engine. */
+/** Normalize one official `LlmFailure` into the code/message pair used by notices. */
 export function classifyContinueFailure(error) {
     const failure = error && typeof error === "object" && error.failure && typeof error.failure === "object"
         ? error.failure
@@ -118,30 +115,27 @@ export function classifyContinueFailure(error) {
     const textCode = String(rawCode || "UNKNOWN").toUpperCase();
     let code = FAILURE_CODE_ALIASES[textCode] ?? HTTP_FAILURE_CODES[textCode] ?? textCode;
     if (HARD_QUOTA_RE.test(message)) code = "QUOTA";
-    const retryAfter = failure && typeof failure === "object" ? failure.providerRetryAfterMs : void 0;
-    return {
-        code,
-        message,
-        retryAfterMs: typeof retryAfter === "number" && Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : void 0
-    };
+    return { code, message };
 }
 
-/** Resolve true when the delay elapsed, false when the turn signal aborted it. */
-function cancellableDelay(delayMs, signal) {
-    if (delayMs <= 0) return Promise.resolve(!signal?.aborted);
-    if (!signal) return new Promise((resolve) => { const timer = setTimeout(resolve, delayMs); timer.unref?.(); });
-    if (signal.aborted) return Promise.resolve(false);
-    return new Promise((resolve) => {
-        const timer = setTimeout(() => {
-            signal.removeEventListener("abort", onAbort);
-            resolve(true);
-        }, delayMs);
-        function onAbort() {
-            clearTimeout(timer);
-            resolve(false);
-        }
-        signal.addEventListener("abort", onAbort, { once: true });
-    });
+/**
+ * Build the official `ResolvedRetryPolicy` that replaces the provider policy.
+ * @param {ReturnType<typeof normalizeContinueConfig>} cfg normalized config
+ * @param {object | undefined} incoming the provider-resolved policy
+ */
+export function resolveRetryPolicy(cfg, incoming) {
+    const blocked = new Set(cfg.blockedCodes);
+    const retryableCodes = [...new Set(cfg.retryableCodes.map((code) => String(code).toUpperCase()))]
+        .filter((code) => !blocked.has(code));
+    const fallback = incoming && typeof incoming === "object" ? incoming : {};
+    return {
+        mode: "normal",
+        maxRetries: cfg.maxAttempts,
+        retryableCodes,
+        initialDelayMs: cfg.delayMs,
+        maxDelayMs: Math.max(cfg.delayMs, Number.isFinite(fallback.maxDelayMs) ? fallback.maxDelayMs : 10_000),
+        jitterRatio: Number.isFinite(fallback.jitterRatio) ? fallback.jitterRatio : 0.1
+    };
 }
 
 function jsonResponse(status, body) {
@@ -155,17 +149,14 @@ function jsonResponse(status, body) {
 }
 
 /**
- * Install the provider-independent recovery layer on a host context.
+ * Install the official-policy override and the Client snapshot route.
  * @param {object} ctx host context
  * @param {unknown} config raw or volatile plugin config
  */
 export function installAutoContinue(ctx, config) {
     const readConfig = configReader(config);
-    const turnAttempts = new Map();
     const notices = new Map();
     let noticeSeq = 0;
-
-    const sessionIdOf = (agent) => agent?.session?.id ?? agent?.id ?? null;
 
     const warn = (message) => {
         try {
@@ -182,9 +173,8 @@ export function installAutoContinue(ctx, config) {
         }
     };
 
-    const publishNotice = (agent, kind, details) => {
-        const sessionId = sessionIdOf(agent);
-        if (sessionId === null) return;
+    const publish = (sessionId, kind, details) => {
+        if (!sessionId) return;
         const at = Date.now();
         notices.set(sessionId, {
             id: "ac-" + String(++noticeSeq),
@@ -197,95 +187,41 @@ export function installAutoContinue(ctx, config) {
         if (notices.size > 256) notices.delete(notices.keys().next().value);
     };
 
-    const notify = (cfg, agent, kind, details) => {
-        if (!cfg.emitProminentError) return;
-        publishNotice(agent, kind, details);
-    };
-
-    const turnKeyOf = (agent, turn) => {
-        const sessionId = sessionIdOf(agent);
-        return sessionId === null ? null : sessionId + ":" + String(Number.isSafeInteger(turn) ? turn : "?");
-    };
-
-    /** The official waterfall: delegate first, add attempts only after it declines. */
-    const recover = async (payload, next) => {
-        let downstream;
-        try {
-            downstream = typeof next === "function" ? await next() : void 0;
-        } catch (error) {
-            /* A downstream recovery failure stays downstream's to report. */
-            throw error;
-        }
-        if (downstream && downstream.kind === "retry") return downstream;
+    /** Override first, then let the official retry executor enforce the policy. */
+    const override = (payload, next) => {
+        if (!payload || typeof payload !== "object" || typeof next !== "function") return next?.();
         const cfg = readConfig();
-        if (!cfg.enabled) return downstream;
-        const agent = payload?.agent;
-        const failure = payload?.failure;
-        const signal = payload?.signal;
-        if (!agent || !failure || signal?.aborted) return downstream;
-
-        const classified = classifyContinueFailure(failure);
-        if (cfg.blockedCodes.includes(classified.code)) {
-            notify(cfg, agent, "blocked", {
-                code: classified.code,
-                detail: classified.message.slice(0, 300),
-                max: cfg.maxAttempts
-            });
-            return downstream;
-        }
-        if (!cfg.retryableCodes.includes(classified.code)) return downstream;
-
-        const key = turnKeyOf(agent, payload.turn);
-        if (key === null) return downstream;
-        const entry = turnAttempts.get(key) ?? { attempts: 0, halted: false };
-        if (entry.attempts >= cfg.maxAttempts) {
-            if (!entry.halted) {
-                entry.halted = true;
-                turnAttempts.set(key, entry);
-                notify(cfg, agent, "halt", {
-                    code: classified.code,
-                    detail: classified.message.slice(0, 300),
-                    attempt: entry.attempts,
-                    max: cfg.maxAttempts
-                });
-            }
-            return downstream;
-        }
-
-        entry.attempts += 1;
-        turnAttempts.set(key, entry);
-        if (turnAttempts.size > 512) turnAttempts.delete(turnAttempts.keys().next().value);
-        notify(cfg, agent, "retry", {
-            code: classified.code,
-            detail: classified.message.slice(0, 300),
-            attempt: entry.attempts,
-            max: cfg.maxAttempts
-        });
-        warn("第 " + entry.attempts + "/" + cfg.maxAttempts + " 次自动续轮（故障码 " + classified.code + "）");
-        const delayMs = Math.max(cfg.delayMs, classified.retryAfterMs ?? 0);
-        if (!await cancellableDelay(delayMs, signal)) return downstream;
-        if (signal?.aborted) return downstream;
-        return { kind: "retry" };
+        if (!cfg.enabled) return next();
+        payload.retryPolicy = resolveRetryPolicy(cfg, payload.retryPolicy);
+        return next();
     };
 
     const disposers = [
-        ctx.on("agent/request-error", (payload, next) => recover(payload, next)),
+        ctx.on("agent/request-error", override, { prepend: true }),
         ctx.on("session/event", (session, event) => {
             if (!session || !event) return;
-            if (event.type !== "turn/start" && event.type !== "turn/end") return;
-            const prefix = String(session.id) + ":";
-            for (const key of turnAttempts.keys()) {
-                if (key.startsWith(prefix)) turnAttempts.delete(key);
+            const cfg = readConfig();
+            if (!cfg.enabled || !cfg.emitProminentError) return;
+            if (event.type === "llm/retry") {
+                const data = event.data;
+                if (!data || !data.failure) return;
+                const failure = classifyContinueFailure(data.failure);
+                publish(session.id, "retry", {
+                    attempt: data.retry,
+                    max: data.maxRetries,
+                    code: failure.code,
+                    detail: failure.message.slice(0, 300)
+                });
+                return;
             }
-        }),
-        ctx.on("agent/disposed", ({ agent } = {}) => {
-            const sessionId = sessionIdOf(agent);
-            if (sessionId === null) return;
-            const prefix = String(sessionId) + ":";
-            for (const key of turnAttempts.keys()) {
-                if (key.startsWith(prefix)) turnAttempts.delete(key);
-            }
-            notices.delete(sessionId);
+            if (event.type !== "turn/end" || event.data?.reason?.kind !== "error") return;
+            const failure = classifyContinueFailure(event.data.reason.error);
+            const kind = cfg.blockedCodes.includes(failure.code) || !cfg.retryableCodes.includes(failure.code) ? "blocked" : "halt";
+            publish(session.id, kind, {
+                code: failure.code,
+                detail: failure.message.slice(0, 300),
+                max: cfg.maxAttempts
+            });
         })
     ];
 
@@ -297,7 +233,6 @@ export function installAutoContinue(ctx, config) {
                 /* ignore */
             }
         }
-        turnAttempts.clear();
         notices.clear();
     }, "dsh-cockpit: auto-continue lifecycle");
 
@@ -330,8 +265,8 @@ export function installAutoContinue(ctx, config) {
     const cfg = readConfig();
     try {
         ctx.logger?.info?.(
-            "[dsh-cockpit] auto-continue 已上线（官方 agent/request-error 重试钩子；额外续轮上限 " +
-            cfg.maxAttempts + " 次·延迟 " + cfg.delayMs + "ms·提示 " + (cfg.emitProminentError ? "开" : "关") + "）"
+            "[dsh-cockpit] auto-continue 已上线（覆盖官方 retryPolicy：上限 " +
+            cfg.maxAttempts + " 次·初始延迟 " + cfg.delayMs + "ms·提示 " + (cfg.emitProminentError ? "开" : "关") + "）"
         );
         if (!cfg.enabled) ctx.logger?.info?.("[dsh-cockpit] auto-continue 当前未启用（enabled: false），可在 设置 → 插件 → 自动续轮 中开启。");
     } catch {

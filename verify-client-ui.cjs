@@ -161,16 +161,9 @@ async function main() {
     }
 
 
-    // Auto-continue notice + settings tab use the official snapshot route.
-    const noticeDock = registrations.find((entry) => entry.definition.name === "conversation.input.dock" && entry.definition.id === "cockpit-auto-continue-notice");
-    assert(noticeDock !== undefined, "auto-continue must register its inline notice above the composer");
-    assert(noticeDock.definition.order === 90, "auto-continue notice order changed");
-    const noticeProps = noticeDock.definition.inject("session-1");
-    noticeProps.store.replace([{ id: "ac-1", sessionId: "session-1", kind: "retry", at: Date.now(), expiresAt: null, code: "TIMEOUT", detail: "timeout", attempt: 1, max: 2 }]);
-    const noticeTree = noticeDock.component({ ...noticeProps, t: (key) => key });
-    const noticeText = textOf(noticeTree);
-    assert(noticeText.includes("TIMEOUT") && noticeText.includes("attempt"), "the notice must show the failure code and attempt");
-    assert(titledNodes(noticeTree).length === 0, "the auto-continue notice must not use native title tooltips");
+    // The retry notice shares the composer row; there is no separate dock row.
+    assert(!registrations.some((entry) => entry.definition.id === "cockpit-auto-continue-notice"),
+        "the notice must not register its own dock row");
 
     const settingsTab = registrations.find((entry) => entry.definition.name === "settings.plugins.tab");
     assert(settingsTab !== undefined, "auto-continue must register its settings tab");
@@ -238,26 +231,27 @@ async function main() {
         globalThis.fetch = realFetch;
     }
 
-    // Composer button: right-aligned dock entry, ordinary user prompt.
+    // Composer row: left-aligned button and the retry notice share one fixed-height row.
     const dock = registrations.find((entry) => entry.definition.name === "conversation.input.dock");
     assert(dock !== undefined, "the temporary-artifact button must register above the composer");
-    assert(dock.definition.id === "cockpit-clean-temp", "composer button id changed");
-    assert(dock.definition.order === 80, "composer button order changed");
+    assert(dock.definition.id === "cockpit-composer-bar", "composer row id changed");
+    assert(dock.definition.order === 80, "composer row order changed");
     const dockProps = dock.definition.inject("session-1");
-    assert(typeof dockProps.send === "function", "composer button must receive its send action");
+    assert(typeof dockProps.send === "function", "composer row must receive its send action");
+    assert(dockProps.store !== undefined, "composer row must receive the notice store");
+    dockProps.store.replace([{ id: "ac-1", sessionId: "session-1", kind: "retry", at: Date.now(), expiresAt: null, code: "TIMEOUT", detail: "timeout", attempt: 1, max: 2 }]);
     const buttonTree = dock.component({ ...dockProps, t: (key) => key });
-    for (const property of ["background", "color"]) {
-        const value = String(buttonTree.props.style?.[property] ?? "");
-        if (value) assert(value.startsWith("var(--dsw-") || value === "transparent", `composer button ${property} must come from a DSH theme token`);
-    }
-    assert(titledNodes(buttonTree).length === 0, "the composer button must not use native title tooltips");
+    assert(titledNodes(buttonTree).length === 0, "the composer row must not use native title tooltips");
     assert(String(buttonTree.props.style?.maxWidth ?? "").includes("--dsh-composer-card-max-width"),
-        "the button row must match the composer card width");
-    assert(buttonTree.props.style?.margin === "0 auto", "the button row must be centered over the composer");
-    assert(String(buttonTree.props.style?.justifyContent ?? "") === "flex-end", "the button must stay right-aligned");
-    const dockButton = findNode(buttonTree, (node) => node.type === "button");
+        "the composer row must match the composer card width");
+    assert(buttonTree.props.style?.margin === "0 auto", "the composer row must be centered over the composer");
+    assert(String(buttonTree.props.style?.justifyContent ?? "") === "flex-start", "the button must be left-aligned");
+    assert(buttonTree.props.style?.height === 48, "the composer row must keep a fixed 48px height");
+    const dockButton = findNode(buttonTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp");
     assert(dockButton !== undefined, "composer button must render");
     assert(dockButton.props.style?.height === 48, "the composer button height must be 48px (twice the old 24px)");
+    const noticeText = textOf(buttonTree);
+    assert(noticeText.includes("TIMEOUT") && noticeText.includes("attempt"), "the retry notice must render inside the composer row");
     for (const property of ["border", "color"]) {
         assert(String(dockButton.props.style?.[property] ?? "").includes("var(--dsw-"),
             `composer button ${property} must come from a DSH theme token`);

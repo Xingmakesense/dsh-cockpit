@@ -20,10 +20,10 @@
 
 1. **续轮覆盖官方策略，但由官方执行。** 以 `prepend: true` 监听 `agent/request-error`，把 `payload.retryPolicy` 替换为 `resolveRetryPolicy(...)`（`mode: "normal"`、`maxRetries`、`retryableCodes`、`initialDelayMs`、`maxDelayMs`、`jitterRatio`），再调用 `next()`。官方 `dsh-llm-retry` 负责退避、取消与 `llm/retry` 持久化事件。不要自己返回 `{kind:"retry"}` 绕过执行器，也不要伪造 `runtime-context` 消息。
 2. **不可重试码从集合中剔除。** `blockedCodes` 必须从覆盖后的 `retryableCodes` 中移除；否则官方执行器仍会重试。
-3. **续轮提示来自官方事件。** `session/event` 的 `llm/retry` 提供服务端已接受的重试进度，`turn/end reason.kind = "error"` 提供最终失败；据此发布提示，客户端轮询 `GET /api/cockpit/auto-continue`。
+3. **续轮提示来自官方事件。** `session/event` 的 `llm/retry` 提供服务端已接受的重试进度，`turn/end reason.kind = "error"` 提供最终失败；据此发布提示，客户端轮询 `GET /api/cockpit/auto-continue`。提示与清理按钮共用同一个固定高度 dock 行，避免提示出现时改变布局高度。
 4. **Config 必须原生 volatile。** `Config` 来自 vendored schemastery 且根节点 `.volatile()`，否则 `ctx.settings.describe()` 会静默跳过本插件；设置页必须走 `ctx.remote.settings`（返回 `RemoteResult`）。
 5. **用户消息发送。** 客户端发送普通用户消息用 `sessions.binding(sessionId).session.prompt(content, "queue")`；`queue` 等价于用户回车，`steer` 是中途引导。按钮固定发送 `清理本项目的临时产物`。
-6. **按钮位置。** `conversation.input.dock` 渲染在输入框卡片上方（卡片外侧，全宽），入口右对齐；`conversation.input.left/right/overlay/activity` 位于卡片内侧。
+6. **按钮位置。** `conversation.input.dock` 渲染在输入框卡片上方（卡片外侧，宽度与卡片一致），按钮左对齐；该行高度固定为 48px，续轮提示内联在同一行，因此提示出现不会推动按钮或官方回到底部按钮。`conversation.input.left/right/overlay/activity` 位于卡片内侧。
 7. **会话菜单宿主探测。** 会话右键菜单由 `ctx.contextMenus` 托管，`sidebar.workspaces.session.menu.item` 槽声明在 `contextMenu.content`（key `session`）下。vendored 客户端的模式探测必须同时接受 `contextMenu.content` 与 `sidebar.workspaces` 两种声明位置，并在两者变化时重新协调。
 8. **删除审计事件**：vendored 归档 host 发出 `archive-manager/session-deleted`，`maintenance.js` 落盘；改 vendored 删除流程时保持该事件。
 9. **附件清理安全阀**：任一转录读取失败、zstd 帧不完整或会话根为空时整轮放弃；扫描必须逐帧解码并仅保留引用哈希。

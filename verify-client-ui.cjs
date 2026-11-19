@@ -110,6 +110,7 @@ async function main() {
         }
     };
     const sidebarTabs = [];
+    const effectDisposers = [];
     const ctx = {
         plugin: (plugin) => plugins.push(plugin),
         remote,
@@ -126,7 +127,9 @@ async function main() {
         },
         effect(fn) {
             const dispose = fn();
-            return typeof dispose === "function" ? dispose : () => {};
+            const result = typeof dispose === "function" ? dispose : () => {};
+            effectDisposers.push(result);
+            return result;
         },
         locale: {
             register(ns, dicts) {
@@ -163,7 +166,49 @@ async function main() {
         && ui.inject.includes("sessions"),
         "cockpit UI must inject slots/remote/sessions"
     );
-    ui.apply(ctx);
+
+    // Pollers stand down while the tab is in the background: a hidden GUI must
+    // not keep hitting the Host every 1.2 s. Becoming visible polls at once.
+    const polledUrls = [];
+    const realFetchBeforePolls = globalThis.fetch;
+    const realDocument = globalThis.document;
+    const visibilityListeners = new Set();
+    globalThis.fetch = async (url) => {
+        polledUrls.push(String(url));
+        return { ok: false, status: 404, json: async () => null };
+    };
+    globalThis.document = {
+        visibilityState: "hidden",
+        addEventListener(event, listener) {
+            if (event === "visibilitychange") visibilityListeners.add(listener);
+        },
+        removeEventListener(event, listener) {
+            if (event === "visibilitychange") visibilityListeners.delete(listener);
+        }
+    };
+    try {
+        ui.apply(ctx);
+        assert(polledUrls.length === 0, "a hidden tab must not poll the Host, got " + polledUrls.join(", "));
+        globalThis.document.visibilityState = "visible";
+        for (const listener of [...visibilityListeners]) listener();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert(polledUrls.some((url) => url.includes("api/cockpit/auto-continue")),
+            "a visible tab must poll the auto-continue snapshot");
+        assert(polledUrls.some((url) => url.includes("api/cockpit/downloads")),
+            "a visible tab must poll the download snapshot");
+    } finally {
+        for (const dispose of effectDisposers.splice(0)) {
+            try {
+                dispose();
+            } catch {
+                /* a stub disposer must not break the test */
+            }
+        }
+        assert(visibilityListeners.size === 0, "polling cleanup must remove the visibility listener");
+        globalThis.fetch = realFetchBeforePolls;
+        if (realDocument === undefined) delete globalThis.document;
+        else globalThis.document = realDocument;
+    }
 
     const locale = locales.find((entry) => entry.ns === "dsh-cockpit");
     assert(locale !== undefined, "cockpit locale namespace must be registered");

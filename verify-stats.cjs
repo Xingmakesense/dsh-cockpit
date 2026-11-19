@@ -121,6 +121,10 @@ async function checkHostRoute() {
     };
     const ctx = {
         logger: { warn() {} },
+        on(type, listener) {
+            eventListeners.push({ type, listener });
+            return () => {};
+        },
         get(name) {
             if (name === "connection") return connection;
             if (name === "sessionProjections") return projection;
@@ -214,6 +218,155 @@ async function checkHostRoute() {
     assert(invalid.status === 400, "an unsupported range must be rejected");
 }
 
+function fixtureSession(id, cwd) {
+    const base = buildFixtureSession();
+    return { ...base, id, seq: base.events.length, header: { ...base.header, id, cwd } };
+}
+
+/** Minimal fake Host: one projection registry, one live-session list, one connection. */
+function createStatsHost(options = {}) {
+    const sessions = options.sessions ?? [];
+    const available = options.servicesAvailable ?? (() => true);
+    const routes = [];
+    const eventListeners = [];
+    let snapshotCalls = 0;
+    const projection = {
+        registered: [],
+        definition: null,
+        register(unit) {
+            this.registered.push(unit);
+            this.definition = unit;
+            return Promise.resolve();
+        },
+        snapshot(target, keys) {
+            snapshotCalls += 1;
+            const unit = this.definition;
+            let state = unit.init(target.header, 0);
+            for (const event of target.events ?? []) state = unit.apply(state, event);
+            const value = unit.wire.viewSchema.parse(unit.wire.view(state));
+            const values = {};
+            for (const key of keys ?? [unit.key]) values[key] = value;
+            return { asOfSeq: target.seq - 1, values };
+        }
+    };
+    const sessionService = { list: () => sessions };
+    const connection = {
+        fetch: {
+            register(route) {
+                routes.push(route);
+                return () => {};
+            }
+        }
+    };
+    const scope = () => ({
+        sessionProjections: projection,
+        sessions: sessionService,
+        connection,
+        on(type, listener) {
+            eventListeners.push({ type, listener });
+            return () => {};
+        },
+        effect: () => () => {},
+        get(name) {
+            if (name === "sessionProjections") return projection;
+            if (name === "sessions") return sessionService;
+            if (name === "connection") return connection;
+            return undefined;
+        }
+    });
+    const ctx = {
+        logger: { warn() {} },
+        on(type, listener) {
+            eventListeners.push({ type, listener });
+            return () => {};
+        },
+        effect(fn) {
+            const dispose = fn();
+            return typeof dispose === "function" ? dispose : () => {};
+        },
+        get(name) {
+            if (name === "connection") return connection;
+            if (!available()) return undefined;
+            if (name === "sessionProjections") return projection;
+            if (name === "sessions") return sessionService;
+            return undefined;
+        },
+        inject(_dependencies, callback) {
+            if (!available()) return () => {};
+            callback(scope());
+            return () => {};
+        }
+    };
+    return {
+        ctx,
+        routes,
+        projection,
+        sessions,
+        registered: projection.registered,
+        snapshotCalls: () => snapshotCalls,
+        listeners: eventListeners
+    };
+}
+
+async function checkRequestDefaults() {
+    const { installStats } = await import("./stats.js");
+    const host = createStatsHost({
+        sessions: [fixtureSession("session-a", "/workspace/a"), fixtureSession("session-b", "/workspace/b"), fixtureSession("session-c", "/workspace/c")]
+    });
+    installStats(host.ctx);
+    const route = host.routes[0];
+    assert(route !== undefined, "statistics route must be registered");
+
+    const all = await route.fetch(new Request("http://localhost/api/cockpit/stats?fields=full"));
+    assert(all.status === 200, "a default request must succeed");
+    const allBody = await all.json();
+    assert(allBody.value.rows.length === 3,
+        "a request without ?limit must scan every live session, got " + allBody.value.rows.length);
+    assert(allBody.value.summary.validCount === 3, "the default summary must cover every live session");
+
+    const limited = await route.fetch(new Request("http://localhost/api/cockpit/stats?fields=full&limit=2"));
+    assert((await limited.json()).value.rows.length === 2, "?limit=2 must cap the scanned sessions");
+    const invalid = await route.fetch(new Request("http://localhost/api/cockpit/stats?fields=full&limit=abc"));
+    assert((await invalid.json()).value.rows.length === 3, "a non-numeric limit must fall back to the default");
+
+    // The projection is a pure fold: an unchanged session must not be folded again.
+    const snapshotsBefore = host.snapshotCalls();
+    const again = await route.fetch(new Request("http://localhost/api/cockpit/stats?fields=summary&range=7"));
+    const againBody = await again.json();
+    assert(host.snapshotCalls() === snapshotsBefore, "unchanged sessions must be served from the snapshot cache");
+    assert(againBody.value.summary.totalTokens === allBody.value.summary.totalTokens,
+        "the cached snapshot must keep the same totals");
+    host.sessions[0].seq += 1;
+    await route.fetch(new Request("http://localhost/api/cockpit/stats?fields=summary"));
+    assert(host.snapshotCalls() === snapshotsBefore + 1,
+        "a session with a new committed event must be re-snapshotted exactly once");
+}
+
+async function checkInstallRetry() {
+    const { installStats } = await import("./stats.js");
+    let available = false;
+    const host = createStatsHost({ sessions: [fixtureSession("session-a", "/workspace/a")], servicesAvailable: () => available });
+    installStats(host.ctx);
+    const route = host.routes[0];
+    assert(route !== undefined, "statistics route must be registered before the services are mounted");
+    const realNow = Date.now;
+    let now = realNow();
+    Date.now = () => now;
+    try {
+        const unavailable = await route.fetch(new Request("http://localhost/api/cockpit/stats"));
+        assert(unavailable.status === 503, "a missing projection service must answer 503, got " + unavailable.status);
+        available = true;
+        now += 6_000;
+        const recovered = await route.fetch(new Request("http://localhost/api/cockpit/stats?fields=summary"));
+        assert(recovered.status === 200, "a recovered projection service must serve later requests, got " + recovered.status);
+        assert(host.registered.length === 1, "the recovered installation must register the projection exactly once");
+        await route.fetch(new Request("http://localhost/api/cockpit/stats?fields=summary"));
+        assert(host.registered.length === 1, "later requests must not register the projection again");
+    } finally {
+        Date.now = realNow;
+    }
+}
+
 function checkClientSurface() {
     const pkg = JSON.parse(read("package.json"));
     assert(pkg.name === "dsh-cockpit", "package name must stay dsh-cockpit");
@@ -248,6 +401,8 @@ function checkClientSurface() {
 async function main() {
     checkVendorParity();
     await checkHostRoute();
+    await checkRequestDefaults();
+    await checkInstallRetry();
     checkClientSurface();
     console.log("all statistics and diagnostics checks passed");
 }

@@ -129,12 +129,19 @@ export function installDownloads(ctx) {
     const track = (request, response) => {
         if (String(request.method).toUpperCase() === "HEAD") return;
         let record;
+        let decided = false;
         let lastPublished = 0;
 
         const ensure = () => {
-            if (record) return;
+            // Headers cannot gain a content-disposition after the head is sent,
+            // so one negative decision per response is final. Without it every
+            // written chunk of every ordinary response re-parsed the header.
+            if (record || decided) return;
             const named = downloadName(response, request.url);
-            if (!named) return;
+            if (!named) {
+                decided = true;
+                return;
+            }
             const length = Number(header(response, "content-length"));
             const now = Date.now();
             record = {

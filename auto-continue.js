@@ -301,6 +301,10 @@ export function installAutoContinue(ctx, config) {
                     if (key.startsWith(prefix)) turnRounds.delete(key);
                 }
             }
+            // Every other durable event (messages, tool calls, step markers) is
+            // irrelevant here: normalizing the live config per event would
+            // allocate two code arrays for each of them.
+            if (event.type !== "llm/retry" && event.type !== "turn/end") return;
             const cfg = readConfig();
             if (!cfg.enabled || !cfg.emitProminentError) return;
             if (event.type === "llm/retry") {

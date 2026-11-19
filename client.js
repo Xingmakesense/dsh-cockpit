@@ -3061,6 +3061,9 @@ window.__ModuleLoader__.load({
         // -------------------------------------------------------------------
         // Mount the archive client and the cockpit UI.
         // -------------------------------------------------------------------
+        /** Whether the GUI tab currently runs in the background. */
+        const tabHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+
         const apply = (ctx) => {
             try {
                 const mod = require("@michengai/dsh-archive-manager");
@@ -3158,27 +3161,47 @@ window.__ModuleLoader__.load({
                             uiCtx.effect(() => {
                                 if (typeof document === "undefined" || typeof fetch !== "function") return;
                                 let stopped = false;
+                                let inFlight = false;
                                 let timer;
+                                const schedule = (delay) => {
+                                    if (!stopped && !tabHidden()) timer = setTimeout(poll, delay);
+                                };
                                 const poll = async () => {
+                                    timer = undefined;
+                                    if (stopped || tabHidden()) return;
+                                    inFlight = true;
                                     try {
                                         const response = await fetch(AUTO_CONTINUE_ROUTE, {
                                             method: "GET",
                                             cache: "no-store",
                                             headers: { accept: "application/json" }
                                         });
+                                        if (stopped) return;
                                         if (response.ok) {
                                             const payload = await response.json();
+                                            if (stopped) return;
                                             noticeStore.replace(payload?.value?.notices);
                                         }
                                     } catch {
                                         /* the host route may be unavailable during startup */
+                                    } finally {
+                                        inFlight = false;
                                     }
-                                    if (!stopped) timer = setTimeout(poll, 1200);
+                                    schedule(1200);
                                 };
+                                // A background tab does no polling at all; becoming
+                                // visible again fetches immediately.
+                                const onVisibility = () => {
+                                    if (tabHidden() || stopped || inFlight) return;
+                                    if (timer !== undefined) clearTimeout(timer);
+                                    poll();
+                                };
+                                document.addEventListener("visibilitychange", onVisibility);
                                 poll();
                                 return () => {
                                     stopped = true;
                                     clearTimeout(timer);
+                                    document.removeEventListener("visibilitychange", onVisibility);
                                     noticeStore.clear();
                                 };
                             }, "dsh-cockpit: auto-continue polling");
@@ -3190,30 +3213,50 @@ window.__ModuleLoader__.load({
                             uiCtx.effect(() => {
                                 if (typeof document === "undefined" || typeof fetch !== "function") return;
                                 let stopped = false;
+                                let inFlight = false;
                                 let timer;
+                                const schedule = (delay) => {
+                                    if (!stopped && !tabHidden()) timer = setTimeout(poll, delay);
+                                };
                                 const poll = async () => {
+                                    timer = undefined;
+                                    if (stopped || tabHidden()) return;
                                     let delay = 1500;
+                                    inFlight = true;
                                     try {
                                         const response = await fetch(DOWNLOAD_ROUTE, {
                                             method: "GET",
                                             cache: "no-store",
                                             headers: { accept: "application/json" }
                                         });
+                                        if (stopped) return;
                                         if (response.ok) {
                                             const payload = await response.json();
+                                            if (stopped) return;
                                             const downloads = Array.isArray(payload?.value) ? payload.value : [];
                                             downloadStore.replace(downloads);
                                             delay = downloads.length > 0 ? 500 : 1500;
                                         }
                                     } catch {
                                         /* the event relay remains as the fallback */
+                                    } finally {
+                                        inFlight = false;
                                     }
-                                    if (!stopped) timer = setTimeout(poll, delay);
+                                    schedule(delay);
                                 };
+                                // A background tab does no polling at all; becoming
+                                // visible again fetches immediately.
+                                const onVisibility = () => {
+                                    if (tabHidden() || stopped || inFlight) return;
+                                    if (timer !== undefined) clearTimeout(timer);
+                                    poll();
+                                };
+                                document.addEventListener("visibilitychange", onVisibility);
                                 poll();
                                 return () => {
                                     stopped = true;
                                     clearTimeout(timer);
+                                    document.removeEventListener("visibilitychange", onVisibility);
                                     downloadStore.clear();
                                 };
                             }, "dsh-cockpit: download progress polling");

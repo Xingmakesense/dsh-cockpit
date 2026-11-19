@@ -16,6 +16,7 @@ const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 const HASH_C = "c".repeat(64);
 const HASH_D = "d".repeat(64);
+const HASH_E = "e".repeat(64);
 
 async function putObject(home, hash, ageMs) {
     const path = join(home, "attachments", "v1", "objects", hash.slice(0, 2), hash);
@@ -43,6 +44,14 @@ async function main() {
             zlib.zstdCompressSync(Buffer.from(`{"text":"file ${HASH_C} used"}\n`)),
             zlib.zstdCompressSync(Buffer.from(`{"text":"a second complete frame"}\n`))
         ]));
+        // An attachment hash split across two frames must still be recognized:
+        // the 63-character carry window is what joins the frames.
+        const session3 = join(home, "sessions", "--F-AI-file--", "session-3");
+        await mkdir(session3, { recursive: true });
+        await writeFile(join(session3, "session.v4.jsonl.zstd"), Buffer.concat([
+            zlib.zstdCompressSync(Buffer.from(`{"text":"split ${HASH_E.slice(0, 40)}`)),
+            zlib.zstdCompressSync(Buffer.from(`${HASH_E.slice(40)} used"}\n`))
+        ]));
     }
 
     const HOUR = 3_600_000;
@@ -50,15 +59,18 @@ async function main() {
     await putObject(home, HASH_B, 48 * HOUR);   // orphan, old → delete
     await putObject(home, HASH_C, 48 * HOUR);   // referenced inside zstd → keep
     await putObject(home, HASH_D, 0);           // orphan, fresh → grace keeps
+    await putObject(home, HASH_E, 48 * HOUR);   // referenced across two zstd frames → keep
 
     const stats = await maintenance.cleanupOrphanAttachments({ home, minAgeMs: 24 * HOUR });
-    assert(stats.referenced === (supportsZstd ? 2 : 1), `expected referenced objects, got ${stats.referenced}`);
+    assert(stats.referenced === (supportsZstd ? 3 : 1), `expected referenced objects, got ${stats.referenced}`);
     assert(stats.deleted === 1 && stats.failed === 0, `expected one orphan deleted, got ${JSON.stringify(stats)}`);
     assert(await exists(join(home, "attachments", "v1", "objects", HASH_A.slice(0, 2), HASH_A)), "referenced attachment must stay");
     assert(!await exists(join(home, "attachments", "v1", "objects", HASH_B.slice(0, 2), HASH_B)), "orphan attachment must be deleted");
     assert(await exists(join(home, "attachments", "v1", "objects", HASH_D.slice(0, 2), HASH_D)), "fresh orphan must survive the grace period");
     if (supportsZstd) {
         assert(await exists(join(home, "attachments", "v1", "objects", HASH_C.slice(0, 2), HASH_C)), "zstd-referenced attachment must stay");
+        assert(await exists(join(home, "attachments", "v1", "objects", HASH_E.slice(0, 2), HASH_E)),
+            "a hash split across zstd frames must stay referenced");
     }
 
     // Safety: a home without any transcript must not purge anything.

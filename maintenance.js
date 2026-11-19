@@ -56,6 +56,10 @@ function decompressFrame(bytes, maxOutputLength) {
 
 /** Scan hashes frame-by-frame without parsing or materializing a whole JSONL transcript. */
 async function collectTranscriptHashes(path, referenced) {
+    // Reject an oversized transcript before loading it: a 32 MiB ceiling is not
+    // worth a whole-file read plus decode when the answer is already known.
+    const info = await stat(path);
+    if (info.size > TRANSCRIPT_MAX_BYTES) throw new Error(`transcript exceeds ${TRANSCRIPT_MAX_BYTES} bytes: ${path}`);
     const buffer = await readFile(path);
     if (buffer.length > TRANSCRIPT_MAX_BYTES) throw new Error(`transcript exceeds ${TRANSCRIPT_MAX_BYTES} bytes: ${path}`);
     let carry = "";
@@ -196,11 +200,16 @@ function actorOf(ctx) {
     } catch {
         /* no initiator in this call chain */
     }
-    return {
-        user: process.env.USERNAME ?? process.env.USER ?? userInfo().username,
-        pid: process.pid,
-        agentId
-    };
+    let user = process.env.USERNAME ?? process.env.USER;
+    if (!user) {
+        try {
+            user = userInfo().username;
+        } catch {
+            // An account without a resolvable name must not break the audit write.
+            user = "unknown";
+        }
+    }
+    return { user, pid: process.pid, agentId };
 }
 
 /**

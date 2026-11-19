@@ -137,6 +137,34 @@ async function main() {
     });
     assert(named.filename === "hello world.jsonl" && named.extension === ".jsonl", "RFC 5987 filenames must be decoded");
 
+    // Ordinary responses must not re-parse the content-disposition header on
+    // every written chunk: one negative decision per response is final.
+    let ordinaryHeaderReads = 0;
+    const ordinary = {
+        getHeader() {
+            ordinaryHeaderReads += 1;
+            return undefined;
+        },
+        writeHead() {
+            return this;
+        },
+        write() {
+            return true;
+        },
+        end() {},
+        once() {
+            return this;
+        }
+    };
+    await onRequest({ method: "GET", url: "/api/not-a-download" }, ordinary, async () => {});
+    ordinary.writeHead(200);
+    for (let index = 0; index < 200; index += 1) ordinary.write("x");
+    assert(ordinaryHeaderReads === 1,
+        "a non-attachment response must read its headers once, got " + ordinaryHeaderReads);
+    const ordinaryBody = await (await registeredRoute.fetch(new Request("http://localhost/api/cockpit/downloads"))).json();
+    assert(!ordinaryBody.value.some((record) => record.filename === "not-a-download"),
+        "ordinary responses must not create download records");
+
     for (const dispose of effects) if (typeof dispose === "function") dispose();
     console.log("all download checks passed");
 }

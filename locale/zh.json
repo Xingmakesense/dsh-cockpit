@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DSH Cockpit",
-    "description": "自动续轮闸与会话归档管理：失败后续轮、归档检索、收藏、恢复与永久删除。"
+    "description": "基于官方 request-error 钩子的自动续轮、会话归档与清理、清理临时产物按钮、下载进度、删除审计与孤儿附件回收。"
   }
 }

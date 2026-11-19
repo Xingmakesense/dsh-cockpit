@@ -2,13 +2,15 @@
  * dsh-cockpit host entry.
  *
  * Four responsibilities, one file each:
- *  - `auto-continue.js`  — failure counting, hidden retry, inline notices.
+ *  - `auto-continue.js`  — official `agent/request-error` recovery layer.
  *  - `archive.js`        — mounts the vendored session-archive host.
  *  - `maintenance.js`    — deletion audit + orphan attachment sweep.
  *  - `downloads.js`      — passive download progress observation and events.
  *
- * The independent `dsh-effort-slider` package owns the reasoning-effort
- * slider; this plugin never touches `llm-pi-ai` or the model selector.
+ * Auto-continue is implemented only on documented seams: the
+ * `agent/request-error` waterfall, the native Config/settings service and a
+ * same-origin snapshot route for the Client. It never fabricates runtime
+ * context messages or borrows an internal event relay.
  */
 import { Config, installAutoContinue } from "./auto-continue.js";
 import { installArchiveHost } from "./archive.js";

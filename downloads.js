@@ -1,15 +1,14 @@
 /**
  * Observe DSH Host attachment downloads without changing their bytes or save path.
- * A connection/request wrapper counts bytes as the Host sends them, while a
- * compact api-session/error relay carries progress records to the Client.
+ * A connection/request wrapper counts bytes as the Host sends them, and the
+ * Client polls one same-origin snapshot route. No internal event relay is used:
+ * progress only travels through the documented HTTP surface.
  */
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 
-export const DOWNLOAD_PREFIX = "【下载】";
 /** Exact same-origin route the Client polls for active download snapshots. */
 export const DOWNLOAD_ROUTE = "/api/cockpit/downloads";
-const PROGRESS_INTERVAL_MS = 200;
 
 function header(response, name) {
     try {
@@ -82,7 +81,7 @@ function jsonResponse(status, body) {
     });
 }
 
-/** Install Host response observation and the Client progress event source. */
+/** Install Host response observation and the Client snapshot route. */
 export function installDownloads(ctx) {
     const active = new Map();
     const recent = new Map();
@@ -94,16 +93,6 @@ export function installDownloads(ctx) {
             ok: true,
             value: [...active.values(), ...recent.values()].map((record) => ({ ...record }))
         })
-    };
-    const publish = {
-        emit(record) {
-            if (typeof ctx.emit === "function") {
-                // api-session/error is resource-scoped. Session-log routes carry
-                // the real session id; an invented id would be filtered before
-                // it reaches the Client.
-                ctx.emit("api-session/error", record.sessionId ?? record.id, `${DOWNLOAD_PREFIX}${JSON.stringify(record)}`);
-            }
-        }
     };
     let nextProgressId = 0;
 
@@ -129,7 +118,6 @@ export function installDownloads(ctx) {
         if (!record || record.state !== "downloading") return;
         record.state = state;
         record.updatedAt = Date.now();
-        publish.emit(record);
         active.delete(record.id);
         if (state === "completed") {
             recent.set(record.id, { ...record, completedAt: record.updatedAt });
@@ -161,20 +149,13 @@ export function installDownloads(ctx) {
                 updatedAt: now
             };
             active.set(record.id, record);
-            lastPublished = now;
-            publish.emit(record);
         };
 
         const advance = (chunk, encoding) => {
             ensure();
             if (!record) return;
             record.receivedBytes += byteCount(chunk, encoding);
-            const now = Date.now();
-            record.updatedAt = now;
-            if (now - lastPublished >= PROGRESS_INTERVAL_MS) {
-                lastPublished = now;
-                publish.emit(record);
-            }
+            record.updatedAt = Date.now();
         };
 
         const originalWriteHead = response.writeHead;

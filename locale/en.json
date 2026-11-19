@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "DSH Cockpit",
-    "description": "The auto-continue guard and session-archive management: retry after failures, search, favorite, restore, and permanently delete archived sessions."
+    "description": "Official request-error auto-continue, session archive and cleanup, a composer cleanup button, download progress, deletion audit and orphan-attachment cleanup."
   }
 }

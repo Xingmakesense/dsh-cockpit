@@ -1,7 +1,8 @@
 // Cockpit checks.
-//  1. auto-continue config normalization (host half),
-//  2. client artifact guards: client.js must be vendor client + wrapper, and
-//     must not contain the upstream-only features removed in 2.3.0.
+//  1. host entry scope (auto-continue runs on the official recovery seam),
+//  2. client artifact guards: client.js must be vendor client + wrapper and
+//     must keep the official-only surfaces,
+//  3. the Session menu probe and the vendored deletion semantics.
 const assert = (condition, message) => {
     if (!condition) throw new Error(message);
 };
@@ -10,33 +11,34 @@ const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const read = (relative) => readFileSync(join(__dirname, relative), "utf8");
+const readOrNull = (relative) => {
+    try {
+        return read(relative);
+    } catch {
+        return null;
+    }
+};
 
-async function checkAutoContinue() {
+async function checkHostEntry() {
     const { name, inject, apply } = await import("./host.js");
-    const { normalizeContinueConfig } = await import("./auto-continue.js");
     assert(name === "cockpit", "host plugin name must stay cockpit");
     assert(Array.isArray(inject), "host inject must be an array");
     assert(typeof apply === "function", "host apply must be exported");
 
-    const off = normalizeContinueConfig(undefined);
-    assert(off.enabled === false, "auto-continue must stay disabled unless configured");
-    assert(off.maxAttempts === 6 && off.delayMs === 1500, "defaults must match dsh-auto-continue 1.0.3");
-    assert(off.retryableCodes.includes("TRANSPORT") && off.blockedCodes.includes("AUTH"), "code lists must match");
-
-    const on = normalizeContinueConfig({
-        enabled: true,
-        maxAttempts: 3.9,
-        delayMs: 0,
-        providerRetryMaxRetries: 2,
-        emitProminentError: false,
-        retryableCodes: ["timeout"]
-    });
-    assert(on.enabled === true && on.maxAttempts === 3 && on.delayMs === 0, "numbers must be coerced");
-    assert(on.providerRetryMaxRetries === 2 && on.emitProminentError === false, "switches must survive");
-    assert(on.retryableCodes[0] === "TIMEOUT", "codes must be upper-cased");
-    assert(!("continueText" in on) && !("haltText" in on), "removed compatibility keys must stay gone");
-    assert(normalizeContinueConfig("bad").enabled === false, "non-object config must be safe");
-    assert(normalizeContinueConfig({ maxAttempts: 0 }).maxAttempts === 6, "invalid attempts must fall back");
+    // Auto-continue must use the documented agent/request-error recovery
+    // waterfall. Hidden inbox injection and internal relays stay forbidden.
+    const host = read("./host.js");
+    assert(host.includes("installAutoContinue"), "host.js must install auto-continue");
+    assert(host.includes("export { Config }"), "host.js must export the native Config");
+    const engine = readOrNull("./auto-continue.js");
+    assert(engine !== null, "auto-continue.js must exist");
+    assert(engine.includes('ctx.on("agent/request-error"'), "auto-continue must hook agent/request-error");
+    assert(engine.includes("kind: \"retry\""), "auto-continue must return the official retry action");
+    assert(!engine.includes("payload.retryPolicy") && !/retryPolicy\s*=/.test(engine), "auto-continue must not rewrite the official retry policy");
+    for (const needle of ["runtime-context", "api-session/error", "followup("]) {
+        assert(!engine.includes(needle), `auto-continue must not use the non-public surface: ${needle}`);
+    }
+    assert(readOrNull("./verify-auto-continue.cjs") !== null, "verify-auto-continue.cjs must exist");
 }
 
 function checkClientArtifact() {
@@ -76,32 +78,33 @@ function checkClientArtifact() {
         assert(client.includes(needle), `client.js lost required surface: ${needle}`);
     }
 
-    // Cockpit UI (2.4.x): inline notice + auto-continue settings tab.
+    // Cockpit UI (3.0.0): download card, cleanup settings section and the
+    // right-aligned composer button that sends an ordinary user message.
     for (const needle of [
-        'id: "cockpit-auto-continue-notice"',
+        'id: "cockpit-download-activity"',
+        'name: "conversation.session.header.utilities"',
+        'id: "cockpit-clean-temp"',
         'name: "conversation.input.dock"',
+        'id: "cockpit-cleanup"',
+        'name: "settings.section"',
+        "api/cockpit/downloads",
+        "api/cockpit/empty-sessions",
+        "emptyCleanupTitle",
+        "清理本项目的临时产物",
+        "binding.session.prompt",
+        'id: "cockpit-auto-continue-notice"',
         'id: "auto-continue"',
         'name: "settings.plugins.tab"',
-        '"api-session/error"',
-        'id: "cockpit-download-activity"',
-        '【下载】',
-        'api/cockpit/downloads',
-        'api/cockpit/empty-sessions',
-        'emptyCleanupTitle'
+        "api/cockpit/auto-continue",
+        "noticeRetry"
     ]) {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
     }
 
-    // DSH 0.2.2 moved the Session menu to ctx.contextMenus and declares the
-    // legacy row slot under contextMenu.content instead of sidebar.workspaces.
-    // Looking only at sidebar.workspaces silently demotes the plugin to its
-    // vendored sidebar, which loses the "delete session" row.
-    assert(
-        client.includes('slots.entries("contextMenu.content")'),
-        "session-menu detection must also accept the contextMenu.content owner (DSH 0.2.2+)"
-    );
-    const menuRows = client.split('id:"archive-manager.delete-session"').length - 1;
-    assert(menuRows === 2, `expected the delete row and its overlay to stay registered, found ${menuRows}`);
+    // Non-public carriers must not leak back into the generated client.
+    for (const needle of ["【自动续轮", "providerRetryMaxRetries", "agent/request-error", "runtime-context", "api-session/error"]) {
+        assert(!client.includes(needle), `client.js still contains a non-public surface: ${needle}`);
+    }
 
     // The three locale dictionaries must still carry the archive page strings.
     for (const key of ['"archives.title"', '"archives.deleteSelected"', '"archives.restore"']) {
@@ -146,13 +149,7 @@ function checkHostArtifact() {
     assert(!index.includes("/api/michengai"), "vendored index.js must not mount an update route");
     assert(index.includes("host-install.js"), "vendored index.js must still export the archive host");
 
-    let updaterPresent = true;
-    try {
-        read("./vendor/archive-manager/lib/plugin-updater.js");
-    } catch {
-        updaterPresent = false;
-    }
-    assert(!updaterPresent, "vendor/archive-manager/lib/plugin-updater.js must stay deleted");
+    assert(readOrNull("./vendor/archive-manager/lib/plugin-updater.js") === null, "vendor/archive-manager/lib/plugin-updater.js must stay deleted");
 }
 
 function checkLocaleMeta() {
@@ -160,34 +157,29 @@ function checkLocaleMeta() {
         const meta = JSON.parse(read(`./locale/${locale}.json`));
         assert(typeof meta.meta?.description === "string", `${locale} locale needs a description`);
         assert(!/滑条|slider/i.test(meta.meta.description), `${locale} locale must not advertise the standalone slider`);
+        assert(/自动续轮|auto-continue/i.test(meta.meta.description), `${locale} locale must advertise auto-continue`);
     }
 }
 
 function checkManifest() {
     const pkg = JSON.parse(read("./package.json"));
     assert(pkg.name === "dsh-cockpit", "package name must stay dsh-cockpit");
+    assert(pkg.version === "3.0.0", "removing auto-continue is a breaking release: version must be 3.0.0");
     assert(pkg.dsh?.bundle?.patch === "./cordis.patch.yml", "dsh.bundle.patch must point at cordis.patch.yml");
     assert(pkg.dsh?.client?.platform === "web", "dsh.client.platform must stay web");
 
     // Everything the host/client load at runtime has to be packed.
-    for (const required of ["host.js", "auto-continue.js", "archive.js", "maintenance.js", "downloads.js", "client.js", "vendor", "cordis.patch.yml", "locale/*.json", "icon.svg"]) {
+    for (const required of ["host.js", "archive.js", "maintenance.js", "downloads.js", "client.js", "vendor", "cordis.patch.yml", "locale/*.json", "icon.svg"]) {
         assert(pkg.files.includes(required), `package.json files is missing ${required}`);
     }
+    assert(pkg.files.includes("auto-continue.js"), "package.json must pack auto-continue.js");
 
     const patch = read("./cordis.patch.yml");
     assert(/-\s*insert:/.test(patch), "cordis.patch.yml must insert the cockpit row");
     assert(/id:\s*cockpit\b/.test(patch), "cordis.patch.yml must use id: cockpit");
     assert(/name:\s*dsh-cockpit\b/.test(patch), "cordis.patch.yml must mount the dsh-cockpit package");
-
-    // A misspelled config key is silently ignored at runtime; reject it here.
-    const known = new Set([
-        "enabled", "maxAttempts", "delayMs",
-        "retryableCodes", "blockedCodes", "emitProminentError", "providerRetryMaxRetries"
-    ]);
-    const configBlock = patch.slice(patch.indexOf("config:"));
-    for (const match of configBlock.matchAll(/^\s{8}([A-Za-z][\w]*):/gm)) {
-        assert(known.has(match[1]), `cordis.patch.yml has an unknown auto-continue key: ${match[1]}`);
-    }
+    assert(/^\s+config:/m.test(patch), "cordis.patch.yml must configure auto-continue");
+    assert(/enabled:\s*true/.test(patch), "cordis.patch.yml must enable auto-continue");
 }
 
 function checkDeletionSemantics() {
@@ -207,7 +199,7 @@ function checkProjectionMigrationSource() {
 }
 
 async function main() {
-    await checkAutoContinue();
+    await checkHostEntry();
     checkProjectionMigrationSource();
     checkClientArtifact();
     checkSessionMenuDetection();

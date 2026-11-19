@@ -2,11 +2,11 @@
 //
 // The UI is plain inline CSS, so a token DSH does not define silently falls
 // back — and a dark fallback on the light theme used to render dark-on-dark
-// text in the download card and the auto-continue page. This check does two
+// text in the download card and the cleanup section. This check does two
 // things:
 //
 //   1. every `var(--dsw-…)` referenced by scripts/client-wrapper.js must exist
-//      in the token snapshot below (taken from DSH 0.2.1-rc.2);
+//      in the token snapshot below (taken from DSH 0.2.2-rc.3);
 //   2. the colours that actually end up next to each other must keep WCAG
 //      contrast: text >= 4.5:1, non-text UI (progress fill vs. track) >= 3:1,
 //      on both the light and the dark theme.

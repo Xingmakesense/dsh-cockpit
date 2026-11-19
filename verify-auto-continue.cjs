@@ -1,330 +1,149 @@
-// Auto-continue engine checks with a fake Cordis context.
-//
-// `apply()` installs the merged dsh-auto-continue handlers on the context, so a
-// tiny mock drives the real event order without a host:
-//   agent/error -> agent/status(idle) -> hidden runtime-context retry, plus
-//   turn/end re-arming and live (volatile) config reads.
+// Auto-continue checks: the official agent/request-error recovery layer.
 const assert = (condition, message) => {
     if (!condition) throw new Error(message);
 };
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const VOLATILE_WRITE = Symbol.for("cosmokit.volatile.write");
+async function main() {
+    const { Config, normalizeContinueConfig, classifyContinueFailure, installAutoContinue, AUTO_CONTINUE_ROUTE } = await import("./auto-continue.js");
 
-function makeContext() {
+    // Native volatile config: required for ctx.settings to see the plugin.
+    assert(Reflect.get(Config, Symbol.for("schemastery")) === true, "Config must be a native Schemastery schema");
+    assert(Config.meta?.volatile === true, "Config root must be volatile for live settings");
+
+    const off = normalizeContinueConfig(undefined);
+    assert(off.enabled === false, "auto-continue must stay disabled unless configured");
+    assert(off.maxAttempts === 6 && off.delayMs === 1500, "defaults must stay stable");
+    assert(off.retryableCodes.includes("TIMEOUT") && off.blockedCodes.includes("AUTH"), "code lists must match");
+
+    const on = normalizeContinueConfig({
+        enabled: true,
+        maxAttempts: 2,
+        delayMs: 0,
+        emitProminentError: true,
+        retryableCodes: ["timeout", "server", "empty_response"],
+        blockedCodes: ["auth"],
+        providerRetryMaxRetries: 9
+    });
+    assert(on.enabled === true && on.maxAttempts === 2 && on.delayMs === 0, "config must be normalized");
+    assert(on.retryableCodes[0] === "TIMEOUT" && on.retryableCodes[1] === "SERVER" && on.blockedCodes[0] === "AUTH", "codes must be upper-cased");
+    assert(!("providerRetryMaxRetries" in on), "the deprecated provider retry key belongs to the official policy and must be ignored");
+
+    assert(classifyContinueFailure({ code: "ETIMEDOUT", message: "x" }).code === "TIMEOUT", "error aliases must classify");
+    assert(classifyContinueFailure({ code: "X", message: "余额不足" }).code === "QUOTA", "hard quota wording must classify");
+
+    // ---- fake host -------------------------------------------------------
     const handlers = new Map();
-    const emitted = [];
-    const logs = [];
-    const disposers = [];
-
+    const effects = [];
+    let registeredRoute;
     const ctx = {
+        logger: { warn() {}, info() {} },
         on(event, handler) {
-            if (!handlers.has(event)) handlers.set(event, []);
-            handlers.get(event).push(handler);
-            return () => {
-                const list = handlers.get(event) ?? [];
-                const index = list.indexOf(handler);
-                if (index >= 0) list.splice(index, 1);
-            };
-        },
-        emit(event, ...args) {
-            emitted.push({ event, args });
-        },
-        logger: {
-            info: (message) => logs.push({ level: "info", message }),
-            warn: (message) => logs.push({ level: "warn", message }),
-            error: (message) => logs.push({ level: "error", message })
+            handlers.set(event, handler);
+            return () => handlers.delete(event);
         },
         effect(setup) {
             const dispose = setup();
-            if (typeof dispose === "function") disposers.push(dispose);
+            effects.push(dispose);
+            return dispose;
         },
-        // The archive half waits for host services; the mock never provides
-        // them, so no archive handler is installed here.
+        get(name) {
+            if (name !== "connection") return undefined;
+            return {
+                fetch: {
+                    register(route) {
+                        registeredRoute = route;
+                        return () => {};
+                    }
+                }
+            };
+        },
         inject() {}
     };
+    installAutoContinue(ctx, on);
+    const recover = handlers.get("agent/request-error");
+    assert(typeof recover === "function", "auto-continue must register on agent/request-error");
+    assert(typeof handlers.get("session/event") === "function", "turn resets must listen to session/event");
+    assert(registeredRoute?.path === AUTO_CONTINUE_ROUTE, "auto-continue must expose the client snapshot route");
 
-    const fire = (event, ...args) => {
-        for (const handler of handlers.get(event) ?? []) handler(...args);
+    const noticeSnapshot = async () => {
+        const response = await registeredRoute.fetch(new Request("http://localhost" + AUTO_CONTINUE_ROUTE));
+        return (await response.json()).value.notices;
     };
+    const payload = (failure, turn = 1) => ({
+        agent: { id: "agent-1", session: { id: "session-1" } },
+        turn,
+        step: 1,
+        provider: "provider",
+        failure,
+        signal: new AbortController().signal
+    });
 
-    return { ctx, fire, emitted, logs, disposers };
-}
+    // The official provider policy runs first. When it retries, this layer
+    // must not consume a budget or publish a notice.
+    assert(JSON.stringify(await recover(payload({ code: "TIMEOUT", message: "x" }), async () => ({ kind: "retry" }))) === '{"kind":"retry"}',
+        "a downstream official retry must pass through");
+    assert((await noticeSnapshot()).length === 0, "a downstream retry must not publish a cockpit notice");
 
-function makeAgent(id = "a1") {
-    const delivered = [];
-    const agent = {
-        id,
-        status: "idle",
-        followup(message) {
-            delivered.push(message);
-        }
+    // The official retryPolicy is never rewritten or replaced.
+    const policy = Object.freeze({ mode: "normal", maxRetries: 3, retryableCodes: Object.freeze(["TIMEOUT"]), initialDelayMs: 1, maxDelayMs: 2, jitterRatio: 0 });
+    const policyPayload = { ...payload({ code: "TIMEOUT", message: "x" }, 9), retryPolicy: policy };
+    await recover(policyPayload, async () => undefined);
+    assert(policyPayload.retryPolicy === policy && policyPayload.retryPolicy.maxRetries === 3,
+        "auto-continue must not rewrite the official retry policy");
+
+    // Official policy declined: add the provider-independent attempt.
+    let result = await recover(payload({ code: "TIMEOUT", message: "timeout" }), async () => undefined);
+    assert(result?.kind === "retry", "the layer must return the official retry action");
+    let notices = await noticeSnapshot();
+    assert(notices.length === 1 && notices[0].kind === "retry" && notices[0].attempt === 1,
+        "the first extra attempt must publish a retry notice");
+
+    // Attempt two, then the cap.
+    result = await recover(payload({ code: "SERVER", message: "server" }), async () => undefined);
+    assert(result?.kind === "retry", "the second attempt must run");
+    result = await recover(payload({ code: "SERVER", message: "server" }), async () => undefined);
+    assert(result === undefined, "the cap must preserve the original error");
+    notices = await noticeSnapshot();
+    assert(notices.some((notice) => notice.kind === "halt" && notice.attempt === 2), "the cap must publish a halt notice");
+
+    // A new turn resets the budget through session/event.
+    handlers.get("session/event")({ id: "session-1" }, { type: "turn/start", data: { turn: 2 } });
+    result = await recover(payload({ code: "TIMEOUT", message: "again" }, 2), async () => undefined);
+    assert(result?.kind === "retry", "a new turn must reset the attempt budget");
+
+    // Blocked codes never retry and explain why.
+    result = await recover(payload({ code: "AUTH", message: "bad key" }, 3), async () => undefined);
+    assert(result === undefined, "blocked codes must not retry");
+    notices = await noticeSnapshot();
+    assert(notices.some((notice) => notice.kind === "blocked" && notice.code === "AUTH"), "blocked codes must publish a blocked notice");
+
+    // Unknown/non-listed codes stay silent and never retry.
+    result = await recover(payload({ code: "SOMETHING_ELSE", message: "?" }, 3), async () => undefined);
+    assert(result === undefined, "unlisted codes must not retry");
+
+    // Aborting the turn during the delay cancels the retry.
+    const slowCtx = {
+        ...ctx,
+        effect(setup) { const dispose = setup(); return dispose; }
     };
-    return { agent, delivered };
-}
+    installAutoContinue(slowCtx, { ...on, delayMs: 60_000, maxAttempts: 3 });
+    const slowRecover = handlers.get("agent/request-error");
+    const controller = new AbortController();
+    const pending = slowRecover({
+        agent: { id: "agent-2", session: { id: "session-2" } },
+        turn: 1,
+        step: 1,
+        provider: "provider",
+        failure: { code: "TIMEOUT", message: "slow" },
+        signal: controller.signal
+    }, async () => undefined);
+    controller.abort();
+    assert(await pending === undefined, "an aborted turn must cancel the delayed retry");
 
-function volatileConfig(initial) {
-    let current = { ...initial };
-    return {
-        get: () => current,
-        [VOLATILE_WRITE]: (next) => {
-            current = next;
-        },
-        replace: (next) => {
-            current = next;
-        }
-    };
-}
+    assert(typeof handlers.get("agent/disposed") === "function", "disposed agents must be cleaned up");
+    for (const dispose of effects) if (typeof dispose === "function") await dispose();
 
-const failure = (code, message = `${code} failure`) => ({ failure: { code, message } });
-
-async function main() {
-    const { apply } = await import("./host.js");
-    const { Config, normalizeContinueConfig, overrideRetryPolicyForAllModels } = await import("./auto-continue.js");
-
-    // --- config schema ---------------------------------------------------------
-    assert(
-        (typeof Config === "object" || typeof Config === "function") && Config !== null,
-        "Config must stay exported for the harness"
-    );
-    assert(
-        Reflect.get(Config, Symbol.for("schemastery")) === true && Config.type === "object" && Config.meta?.volatile === true,
-        "Config must be a native volatile Schemastery schema (settings projection depends on it)"
-    );
-    assert(normalizeContinueConfig({ maxAttempts: 0 }).maxAttempts === 6, "invalid attempts must fall back");
-
-    // --- providerRetryMaxRetries actually overrides every provider's policy ---
-    {
-        const overridden = overrideRetryPolicyForAllModels({
-            retryPolicy: {
-                mode: "normal",
-                maxRetries: 5,
-                retryableCodes: ["TRANSPORT"],
-                initialDelayMs: 1000,
-                maxDelayMs: 30000,
-                jitterRatio: 0.2
-            }
-        }, normalizeContinueConfig({ providerRetryMaxRetries: 3 }));
-        assert(overridden.mode === "normal" && overridden.maxRetries === 3, "system maxRetries=5 must become 3");
-        assert(overridden.retryableCodes.length === 1 && overridden.initialDelayMs === 1000 && overridden.maxDelayMs === 30000 && overridden.jitterRatio === 0.2,
-            "provider-specific retry codes and backoff must be preserved");
-        const always = overrideRetryPolicyForAllModels({
-            retryPolicy: { mode: "always", initialDelayMs: 100, maxDelayMs: 1000, jitterRatio: 0 }
-        }, normalizeContinueConfig({ providerRetryMaxRetries: 3 }));
-        assert(always.mode === "normal" && always.maxRetries === 3, "an uncapped always policy must also become capped at 3");
-        const fallback = overrideRetryPolicyForAllModels({ retryPolicy: undefined }, normalizeContinueConfig({ providerRetryMaxRetries: 3 }));
-        assert(fallback.maxRetries === 3 && fallback.retryableCodes.includes("TIMEOUT"), "an absent provider policy must receive a complete default");
-    }
-    {
-        const { ctx, fire } = makeContext();
-        await apply(ctx, { enabled: true, providerRetryMaxRetries: 3 });
-        const { agent } = makeAgent();
-        const payload = {
-            agent,
-            turn: 1,
-            step: 1,
-            provider: "kimi",
-            failure: failure("TRANSPORT"),
-            retryPolicy: { mode: "normal", maxRetries: 5, retryableCodes: ["TRANSPORT"], initialDelayMs: 500, maxDelayMs: 10000, jitterRatio: 0.1 },
-            signal: new AbortController().signal
-        };
-        fire("agent/request-error", payload, () => Promise.resolve({ kind: "retry" }));
-        assert(payload.retryPolicy.maxRetries === 3, "agent/request-error must apply the override to Kimi and every other provider");
-    }
-
-    // --- retryable failure -> one hidden retry, never a user message ----------
-    {
-        const { ctx, fire, emitted } = makeContext();
-        await apply(ctx, { enabled: true, delayMs: 0 });
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure("TRANSPORT"), turn: 1 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 1, "a retryable failure must schedule exactly one retry");
-        assert(delivered[0].role === "user", "retry message must be a user-role message");
-        assert(
-            delivered[0].source && delivered[0].source.kind === "runtime-context",
-            "retry must ride the hidden runtime-context source, not the user channel"
-        );
-        assert(delivered[0].content[0].type === "text", "retry message must carry text content");
-        assert(emitted.length === 1, "a retry must report one notice to the client overlay");
-        assert(emitted[0].event === "api-session/error", "the notice must ride api-session/error");
-        const notice = String(emitted[0].args[1]);
-        assert(notice.includes("【自动续轮】") && notice.includes("第 1/6 次"), "notice must name the attempt");
-        assert(notice.includes("TRANSPORT"), "notice must carry the failure code");
-
-        // A successful turn re-arms the counter.
-        fire("session/event", { id: agent.id }, { type: "turn/end", data: { reason: { kind: "completed" } } });
-        fire("agent/error", { agent, error: failure("TIMEOUT"), turn: 2 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 2, "counter must reset after a successful turn");
-        assert(String(emitted[1].args[1]).includes("第 1/6 次"), "re-armed chain restarts at attempt 1");
-    }
-
-    // --- emitProminentError: false silences the notice, not the retry --------
-    {
-        const { ctx, fire, emitted } = makeContext();
-        await apply(ctx, { enabled: true, delayMs: 0, emitProminentError: false });
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure("TRANSPORT"), turn: 1 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 1, "the retry must still happen with notices disabled");
-        assert(emitted.length === 0, "no notice may be emitted when emitProminentError is false");
-    }
-
-    // --- blocked / non-retryable codes never continue --------------------------
-    for (const code of ["AUTH", "SOMETHING_NEW"]) {
-        const { ctx, fire, emitted } = makeContext();
-        await apply(ctx, { enabled: true, delayMs: 0 });
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure(code), turn: 1 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 0, `${code} must never auto-continue`);
-        assert(emitted.length === 1 && emitted[0].event === "api-session/error", `${code} must raise one notice`);
-        const notice = String(emitted[0].args[1]);
-        assert(notice.includes("【自动续轮·未启动】"), "blocked codes must be labelled as not started");
-        assert(notice.includes(code), "notice must name the failure code");
-    }
-
-    // --- attempt cap: no message, one halt notice ------------------------------
-    {
-        const { ctx, fire, emitted } = makeContext();
-        await apply(ctx, { enabled: true, delayMs: 0, maxAttempts: 2 });
-        const { agent, delivered } = makeAgent();
-        for (let turn = 1; turn <= 2; turn += 1) {
-            fire("agent/error", { agent, error: failure("RATE_LIMIT"), turn });
-            fire("agent/status", { agent, status: "idle" });
-        }
-        assert(delivered.length === 2, "maxAttempts retries must be scheduled");
-
-        const beforeCap = emitted.length;
-        fire("agent/error", { agent, error: failure("RATE_LIMIT"), turn: 3 });
-        assert(emitted.length === beforeCap + 1, "reaching the cap must raise the halt notice");
-        assert(String(emitted[emitted.length - 1].args[1]).includes("【自动续轮·已停止】"), "halt notice must be labelled stopped");
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 2, "the halt notice must not be delivered as a message");
-
-        // Further failures keep the chain halted without repeating the notice.
-        const afterHalt = emitted.length;
-        fire("agent/error", { agent, error: failure("RATE_LIMIT"), turn: 4 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(emitted.length === afterHalt, "halt notice must be emitted once per failure chain");
-    }
-
-    // --- disabled config: handler stays installed but does nothing ------------
-    {
-        const { ctx, fire, logs } = makeContext();
-        await apply(ctx, { enabled: false });
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure("TRANSPORT"), turn: 1 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 0, "disabled auto-continue must not retry");
-        assert(
-            logs.some((entry) => entry.level === "info" && entry.message.includes("未启用")),
-            "disabled auto-continue must log that it is off"
-        );
-    }
-
-    // --- live config: enabling without remount --------------------------------
-    {
-        const { ctx, fire } = makeContext();
-        const config = volatileConfig({ enabled: false, delayMs: 0 });
-        await apply(ctx, config);
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure("SERVER"), turn: 1 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 0, "volatile config must gate the handler");
-
-        config.replace({ enabled: true, delayMs: 0 });
-        fire("agent/error", { agent, error: failure("SERVER"), turn: 2 });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 1, "enabling the volatile config must take effect without remount");
-    }
-
-    // --- delay + generation guard ---------------------------------------------
-    {
-        const { ctx, fire } = makeContext();
-        await apply(ctx, { enabled: true, delayMs: 20 });
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure("SERVER"), turn: 1 });
-        fire("agent/status", { agent, status: "idle" });
-        fire("session/event", { id: agent.id }, { type: "turn/start", data: {} });
-        await sleep(60);
-        assert(delivered.length === 0, "a new turn must cancel a pending delayed retry");
-        fire("agent/error", { agent, error: failure("SERVER"), turn: 2 });
-        fire("agent/status", { agent, status: "idle" });
-        await sleep(60);
-        assert(delivered.length === 1, "cancelling a delayed retry must not consume the attempt budget");
-    }
-
-    // --- turn/end fallback and per-Turn dedupe --------------------------------
-    {
-        const { ctx, fire, emitted } = makeContext();
-        const { agent, delivered } = makeAgent();
-        ctx.agents = { get: (id) => id === agent.id ? agent : undefined };
-        await apply(ctx, { enabled: true, delayMs: 0 });
-        fire("session/event", { id: agent.id }, {
-            type: "turn/end",
-            data: { turn: 1, reason: { kind: "error", error: { code: "TIMEOUT", message: "pi-ai stream idle timeout" } } }
-        });
-        assert(delivered.length === 1, "a terminal turn/end error must arm continuation without agent/error");
-        assert(emitted.length === 1, "the turn/end fallback must publish one notice");
-    }
-    {
-        const { ctx, fire, emitted } = makeContext();
-        const { agent, delivered } = makeAgent();
-        ctx.agents = { get: () => agent };
-        await apply(ctx, { enabled: true, delayMs: 0 });
-        fire("agent/error", { agent, error: failure("TRANSPORT"), turn: 1 });
-        fire("session/event", { id: agent.id }, {
-            type: "turn/end",
-            data: { turn: 1, reason: { kind: "error", error: { code: "TRANSPORT", message: "TRANSPORT failure" } } }
-        });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 1, "agent/error and turn/end for the same Turn must charge once");
-        assert(emitted.length === 1, "the same Turn must not emit duplicate notices");
-    }
-
-    // --- explicit quota is never retried, including a rate-limit-shaped report -
-    for (const failureValue of [
-        { code: "QUOTA", message: "TeamoRouter 钱包余额不足，请充值后继续使用" },
-        { code: "RATE_LIMIT", message: "You've reached your 5-hour usage limit. Please purchase extra usage." }
-    ]) {
-        const { ctx, fire, emitted } = makeContext();
-        const { agent, delivered } = makeAgent();
-        ctx.agents = { get: () => agent };
-        await apply(ctx, { enabled: true, delayMs: 0 });
-        fire("session/event", { id: agent.id }, {
-            type: "turn/end",
-            data: { turn: 1, reason: { kind: "error", error: failureValue } }
-        });
-        assert(delivered.length === 0, "hard quota must never be retried");
-        assert(emitted.length === 1 && emitted[0].args[1].includes("QUOTA"), "hard quota must be reported as QUOTA");
-    }
-
-    // --- disposal cancels a delayed retry --------------------------------------
-    {
-        const { ctx, fire, disposers } = makeContext();
-        await apply(ctx, { enabled: true, delayMs: 20 });
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure("SERVER"), turn: 1 });
-        fire("agent/status", { agent, status: "idle" });
-        for (const dispose of disposers) dispose();
-        await sleep(60);
-        assert(delivered.length === 0, "plugin disposal must clear every delayed retry timer");
-    }
-
-    // --- agent disposal forgets the counter -----------------------------------
-    {
-        const { ctx, fire } = makeContext();
-        await apply(ctx, { enabled: true, delayMs: 0, maxAttempts: 1 });
-        const { agent, delivered } = makeAgent();
-        fire("agent/error", { agent, error: failure("EMPTY_RESPONSE"), turn: 1 });
-        fire("agent/disposed", { agent });
-        fire("agent/status", { agent, status: "idle" });
-        assert(delivered.length === 0, "a disposed agent must not receive a retry");
-    }
-
-    console.log("all auto-continue engine checks passed");
+    console.log("all auto-continue checks passed");
 }
 
 main().catch((error) => {

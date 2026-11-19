@@ -1,12 +1,11 @@
-// Download observation checks: real response bytes and the compatible relay.
+// Download observation checks: real response bytes and the polling snapshot.
 const assert = (condition, message) => {
     if (!condition) throw new Error(message);
 };
 
 async function main() {
-    const { installDownloads, downloadName, DOWNLOAD_PREFIX } = await import("./downloads.js");
+    const { installDownloads, downloadName } = await import("./downloads.js");
     const handlers = new Map();
-    const emitted = [];
     const effects = [];
     let registeredRoute;
     const ctx = {
@@ -19,9 +18,6 @@ async function main() {
             const dispose = setup();
             effects.push(dispose);
             return dispose;
-        },
-        emit(event, ...args) {
-            emitted.push({ event, args });
         },
         get(name) {
             if (name !== "connection") return undefined;
@@ -83,21 +79,16 @@ async function main() {
     assert(completedBody.value.length === 1 && completedBody.value[0].state === "completed" && completedBody.value[0].receivedBytes === 6,
         "completed downloads must remain discoverable in the recent snapshot");
 
-    assert(emitted.length === 2, "a small download must emit start and completion without redundant progress");
-    const [start, completed] = emitted;
-    assert(start.event === "api-session/error" && completed.event === "api-session/error", "download must use the compatible relay");
-    assert(start.args[0] === "example" && completed.args[0] === "example", "download events must use the real session resource id");
-    const first = JSON.parse(start.args[1].slice(DOWNLOAD_PREFIX.length));
-    const last = JSON.parse(completed.args[1].slice(DOWNLOAD_PREFIX.length));
+    const first = liveBody.value[0];
+    const last = completedBody.value[0];
     assert(first.filename === "dsh-session-example.zip" && first.extension === ".zip", "filename and extension must be preserved");
-    assert(first.receivedBytes === 0 && first.totalBytes === 6 && first.state === "downloading", "start metadata is invalid");
+    assert(first.receivedBytes === 3 && first.totalBytes === 6 && first.state === "downloading", "live metadata is invalid");
     assert(last.receivedBytes === 6 && last.totalBytes === 6 && last.state === "completed", "completion must count exact bytes");
     assert(first.id === last.id, "one response must keep one download id");
     assert(first.sessionId === "example" && first.sessionId !== first.id, "the progress record must retain its real session id");
 
-    // A streamed ZIP has no Content-Length. Intermediate response.write calls
-    // must still publish real byte deltas instead of only start/completion.
-    emitted.length = 0;
+    // A streamed ZIP has no Content-Length: the snapshot must expose live bytes
+    // without inventing a percentage.
     const realNow = Date.now;
     let now = 5000;
     Date.now = () => now;
@@ -128,11 +119,13 @@ async function main() {
         streamed.write(Buffer.from([1, 2]));
         now += 250;
         streamed.write(Buffer.from([3, 4, 5]));
-        streamed.end();
-        assert(emitted.length === 3, "streamed bytes must emit start, throttled live progress, and completion");
-        const progress = JSON.parse(emitted[1].args[1].slice(DOWNLOAD_PREFIX.length));
-        assert(progress.state === "downloading" && progress.receivedBytes === 5, "live progress must count every streamed byte");
+        const streamSnapshot = await registeredRoute.fetch(new Request("http://localhost/api/cockpit/downloads"));
+        const streamBody = await streamSnapshot.json();
+        const progress = streamBody.value.find((record) => record.sessionId === "streamed");
+        assert(progress !== undefined && progress.state === "downloading", "streamed downloads must stay visible in the snapshot");
+        assert(progress.receivedBytes === 5, "live progress must count every streamed byte");
         assert(progress.totalBytes === null, "an unknown stream length must stay null instead of inventing a percentage");
+        streamed.end();
     } finally {
         Date.now = realNow;
     }

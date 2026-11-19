@@ -8,8 +8,9 @@
 //
 // Two Cordis plugins are mounted here:
 //   1. the vendored archive-manager client (`@michengai/dsh-archive-manager`),
-//   2. the cockpit UI: a centered auto-continue notice plus the auto-continue
-//      settings page (`settings.plugins.tab`).
+//   2. the cockpit UI: the auto-continue notice, the download card, the
+//      auto-continue settings page, the session-cleanup settings section and
+//      the "clean temporary artifacts" button above the composer.
 // ---------------------------------------------------------------------------
 window.__ModuleLoader__.load({
     id: "dsh-cockpit",
@@ -19,23 +20,37 @@ window.__ModuleLoader__.load({
         const React = require("react");
         const h = React.createElement;
 
+
         const NS = "dsh-cockpit";
-        const NOTICE_PREFIX = "【自动续轮";
-        const DOWNLOAD_PREFIX = "【下载】";
-        const NOTICE_TIMEOUT_MS = 9000;
+        const AUTO_CONTINUE_ROUTE = "api/cockpit/auto-continue";
+        /** Exact user-side message the button above the composer sends. */
+        const CLEAN_TEMP_MESSAGE = "清理本项目的临时产物";
 
         const DICTS = {
             zh: {
+                cleanupSection: "会话清理",
+                cleanupTitle: "会话清理",
+                cleanupDescription: "预览并永久删除空对话，以及没有被任何父会话引用的子会话（幽灵会话）；删除前会显示候选数量并要求确认。",
+                emptyCleanup: "清理",
+                emptyNone: "没有需要清理的会话",
+                emptyConfirm: "发现 {empty} 个空对话、{ghost} 个幽灵会话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
+                emptyDeleteConfirm: "确认删除",
+                emptyDeleteResult: "已删除 {deleted}，跳过 {skipped}，失败 {failed}",
+                emptyFailed: "操作失败：",
+                cancel: "取消",
+                cleanTemp: "清理临时产物",
+                cleanTempHint: "以用户身份发送「清理本项目的临时产物」",
+                sending: "发送中…",
+                sent: "已发送",
+                sendFailed: "发送失败：",
                 tab: "自动续轮",
                 title: "自动续轮",
-                description: "请求失败后自动重新发起，不写入任何用户消息。",
+                description: "模型请求失败后，在官方提供方重试策略之外，再自动重试当前请求；不会写入任何对话消息。",
                 enabled: "启用自动续轮",
-                maxAttempts: "最大续轮次数",
+                maxAttempts: "额外续轮次数",
                 delayMs: "续轮延迟（毫秒）",
-                providerRetry: "单次请求额外重试",
                 prominent: "显示自动续轮提示",
-                formulaTitle: "总请求次数",
-                formula: "（1 + 单次请求额外重试）×（1 + 续轮次数）",
+                retryHint: "官方重试策略用尽后，最多再自动重试 {max} 次。",
                 save: "保存",
                 saving: "保存中…",
                 saved: "已保存",
@@ -49,30 +64,32 @@ window.__ModuleLoader__.load({
                 noticeBlocked: "自动续轮未启动",
                 close: "关闭",
                 failureCode: "故障码",
-                attempt: "第 {attempt}/{max} 次",
-                registered: "已注册：",
-                requestUnit: "次",
-                emptyCleanup: "清理",
-                emptyCleanupTitle: "空对话清理",
-                emptyCleanupDescription: "预览并永久删除空对话，以及没有被任何父会话引用的子会话（幽灵会话）；删除前会显示候选数量并要求确认。",
-                emptyNone: "没有需要清理的会话",
-                emptyConfirm: "发现 {empty} 个空对话、{ghost} 个幽灵会话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
-                emptyDeleteConfirm: "确认删除",
-                emptyDeleteResult: "已删除 {deleted}，跳过 {skipped}，失败 {failed}",
-                emptyFailed: "操作失败：",
-                cancel: "取消",
+                attempt: "第 {attempt}/{max} 次"
             },
             en: {
+                cleanupSection: "Session cleanup",
+                cleanupTitle: "Session cleanup",
+                cleanupDescription: "Preview and permanently delete empty chats and subagent sessions no parent references (ghost sessions). The candidate count is shown before you confirm.",
+                emptyCleanup: "Clean",
+                emptyNone: "Nothing to clean up",
+                emptyConfirm: "{empty} empty chats and {ghost} ghost sessions will be permanently deleted ({skipped} skipped). This cannot be undone.",
+                emptyDeleteConfirm: "Delete permanently",
+                emptyDeleteResult: "Deleted {deleted}, skipped {skipped}, failed {failed}",
+                emptyFailed: "Operation failed: ",
+                cancel: "Cancel",
+                cleanTemp: "Clean temporary artifacts",
+                cleanTempHint: "Send \"清理本项目的临时产物\" as the user",
+                sending: "Sending…",
+                sent: "Sent",
+                sendFailed: "Send failed: ",
                 tab: "Auto-continue",
                 title: "Auto-continue",
-                description: "Re-issues a failed request automatically without writing any user message.",
+                description: "After the official provider retry policy gives up, retry the current request automatically. No chat message is written.",
                 enabled: "Enable auto-continue",
-                maxAttempts: "Max continuations",
+                maxAttempts: "Extra continuations",
                 delayMs: "Delay (ms)",
-                providerRetry: "Extra retries per request",
                 prominent: "Show auto-continue notices",
-                formulaTitle: "Total requests",
-                formula: "(1 + extra retries) × (1 + continuations)",
+                retryHint: "After the official retry policy gives up, retry at most {max} more times.",
                 save: "Save",
                 saving: "Saving…",
                 saved: "Saved",
@@ -86,71 +103,16 @@ window.__ModuleLoader__.load({
                 noticeBlocked: "Auto-continue not started",
                 close: "Close",
                 failureCode: "Failure code",
-                attempt: "Attempt {attempt}/{max}",
-                registered: "Registered: ",
-                requestUnit: "requests",
-                emptyCleanup: "Clean",
-                emptyCleanupTitle: "Empty chat cleanup",
-                emptyCleanupDescription: "Preview and permanently delete empty chats and subagent sessions no parent references (ghost sessions). The candidate count is shown before you confirm.",
-                emptyNone: "Nothing to clean up",
-                emptyConfirm: "{empty} empty chats and {ghost} ghost sessions will be permanently deleted ({skipped} skipped). This cannot be undone.",
-                emptyDeleteConfirm: "Delete permanently",
-                emptyDeleteResult: "Deleted {deleted}, skipped {skipped}, failed {failed}",
-                emptyFailed: "Operation failed: ",
-                cancel: "Cancel",
+                attempt: "Attempt {attempt}/{max}"
             }
         };
 
-        // -------------------------------------------------------------------
-        // Small external store for the centered notice.
-        // -------------------------------------------------------------------
-        function createNoticeStore() {
-            let value = null;
-            let timer;
-            const listeners = new Set();
-            const publish = () => {
-                for (const listener of listeners) {
-                    try {
-                        listener();
-                    } catch {
-                        /* a bad listener must not break the relay */
-                    }
-                }
-            };
-            return {
-                get: () => value,
-                subscribe(listener) {
-                    listeners.add(listener);
-                    return () => listeners.delete(listener);
-                },
-                show(notice) {
-                    value = notice;
-                    publish();
-                    clearTimeout(timer);
-                    if (notice.kind === "retry") {
-                        timer = setTimeout(() => {
-                            value = null;
-                            publish();
-                        }, NOTICE_TIMEOUT_MS);
-                    }
-                },
-                close() {
-                    clearTimeout(timer);
-                    value = null;
-                    publish();
-                }
-            };
-        }
-
-        function parseDownloadMessage(raw) {
-            if (typeof raw !== "string" || !raw.startsWith(DOWNLOAD_PREFIX)) return null;
-            try {
-                const record = JSON.parse(raw.slice(DOWNLOAD_PREFIX.length));
-                return record && typeof record.id === "string" ? record : null;
-            } catch {
-                return null;
-            }
-        }
+        /** Send one ordinary user message through the official Session API. */
+        const sendUserText = async (sessions, sessionId, text) => {
+            const binding = sessions?.binding?.(sessionId);
+            if (binding === undefined) throw new Error("session is unavailable");
+            return binding.session.prompt([{ type: "text", text }], "queue");
+        };
 
         /** Active-download snapshots with short-window, byte-based speeds. */
         function createDownloadStore() {
@@ -332,12 +294,10 @@ window.__ModuleLoader__.load({
             },
             h("style", null, "@keyframes cockpit-download-indeterminate{from{transform:translateX(-110%)}to{transform:translateX(240%)}}.cockpit-download-indeterminate{animation:cockpit-download-indeterminate 1.15s linear infinite}@media(prefers-reduced-motion:reduce){.cockpit-download-indeterminate{animation:none}}"),
             h("span", {
-                title: item.filename,
                 style: { flex: "1 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: THEME.text, fontWeight: 500 }
             }, stem),
             h("span", { style: { flex: "none", fontSize: 11, color: THEME.textSecondary } }, extension),
             h("span", {
-                title: Number.isFinite(item.totalBytes) ? `${item.receivedBytes} / ${item.totalBytes} bytes` : `${item.receivedBytes} bytes`,
                 style: { flex: "none", width: 142, display: "flex", flexDirection: "column", alignItems: "stretch" }
             },
                 h("span", { style: { height: 13, fontSize: 11, lineHeight: "13px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: THEME.textSecondary } }, `${formatDownloadBytes(item.receivedBytes)} · ${statusText}`),
@@ -465,49 +425,6 @@ window.__ModuleLoader__.load({
             );
         }
 
-        function parseNotice(raw, sessionId) {
-            if (typeof raw !== "string" || !raw.startsWith(NOTICE_PREFIX)) return null;
-            const fraction = raw.match(/第\s*(\d+)\s*\/\s*(\d+)\s*次/);
-            const code = raw.match(/故障码\s*([A-Z0-9_]+)/);
-            const reason = raw.match(/失败原因：([\s\S]*)$/);
-            const kind = raw.includes("已停止") ? "halt" : raw.includes("未启动") ? "blocked" : "retry";
-            return {
-                sessionId,
-                kind,
-                attempt: fraction ? Number(fraction[1]) : null,
-                max: fraction ? Number(fraction[2]) : null,
-                code: code ? code[1] : null,
-                reason: reason ? reason[1].trim() : null
-            };
-        }
-
-        /** User-facing Chinese reason shown immediately after the failure code. */
-        function chineseFailureReason(notice) {
-            const code = String(notice.code || "UNKNOWN").toUpperCase();
-            const detail = String(notice.reason || "");
-            if (/insufficient[ _-]?(?:balance|funds)|quota\s+(?:is\s+)?exhausted|usage\s+limit|free\s+quota|recharge|wallet|余额不足|额度(?:不足|耗尽|已用完)|钱包余额|充值后继续使用/iu.test(detail)) {
-                return "账户额度不足或已用完";
-            }
-            const reasons = {
-                TRANSPORT: "网络连接或传输中断",
-                TIMEOUT: "模型请求超时",
-                RATE_LIMIT: "模型服务暂时限流，请稍后重试",
-                SERVER: "模型服务端暂时异常",
-                EMPTY_RESPONSE: "模型未返回有效内容",
-                QUOTA: "账户额度不足或已用完",
-                AUTH: "模型认证失败，请检查登录状态或 API Key",
-                AUTHENTICATION: "模型认证失败，请检查登录状态或 API Key",
-                UNAUTHORIZED: "模型认证失败，请检查登录状态或 API Key",
-                ACCOUNT: "账户或登录状态异常",
-                SIGN_IN: "账户或登录状态异常",
-                SIGNIN: "账户或登录状态异常",
-                BAD_REQUEST: "请求参数不被当前模型接受",
-                INVALID_REQUEST: "请求参数不被当前模型接受",
-                UNKNOWN: "未知模型请求错误"
-            };
-            return reasons[code] ?? "模型请求失败，请查看日志了解详情";
-        }
-
         // -------------------------------------------------------------------
         // Styles (inline; the harness theme tokens are used when present).
         //
@@ -545,6 +462,7 @@ window.__ModuleLoader__.load({
             borderRadius: 14,
             boxShadow: THEME.shadow
         };
+
         const labelStyle = {
             fontSize: 12,
             color: THEME.textSecondary,
@@ -555,7 +473,7 @@ window.__ModuleLoader__.load({
             boxSizing: "border-box",
             padding: "8px 10px",
             borderRadius: 8,
-            border: `1px solid ${THEME.border}`,
+            border: "1px solid " + THEME.border,
             background: THEME.field,
             color: THEME.text,
             fontSize: 13
@@ -576,28 +494,100 @@ window.__ModuleLoader__.load({
             color: THEME.text
         };
 
-        // Inline notice: one slim row in the conversation column (above the
-        // composer), not a page-covering modal. No tooltip: the row itself
-        // carries the whole summary, so hovering shows nothing extra.
+        // Right-aligned button above the composer card: it sends an ordinary
+        // user message through the documented Session prompt API, exactly like
+        // typing it and pressing Enter.
+        /** Notices published by the Host snapshot route. */
+        function createNoticeStore() {
+            let value = Object.freeze([]);
+            const listeners = new Set();
+            const dismissed = new Set();
+            const publish = () => {
+                for (const listener of listeners) {
+                    try {
+                        listener();
+                    } catch {
+                        /* one bad view must not break notices */
+                    }
+                }
+            };
+            return {
+                get: () => value,
+                subscribe(listener) {
+                    listeners.add(listener);
+                    return () => listeners.delete(listener);
+                },
+                replace(notices) {
+                    const next = (Array.isArray(notices) ? notices : [])
+                        .filter((notice) => notice && typeof notice.id === "string" && !dismissed.has(notice.id))
+                        .sort((left, right) => (left.at ?? 0) - (right.at ?? 0))
+                        .map((notice) => Object.freeze({ ...notice }));
+                    const previous = value;
+                    if (previous.length === next.length
+                        && previous.every((notice, index) => notice.id === next[index].id && notice.at === next[index].at)) return;
+                    value = Object.freeze(next);
+                    publish();
+                },
+                dismiss(id) {
+                    if (typeof id !== "string") return;
+                    dismissed.add(id);
+                    if (dismissed.size > 1000) dismissed.clear();
+                    value = Object.freeze(value.filter((notice) => notice.id !== id));
+                    publish();
+                },
+                clear() {
+                    value = Object.freeze([]);
+                    publish();
+                }
+            };
+        }
+
+        /** User-facing Chinese reason shown immediately after the failure code. */
+        function chineseFailureReason(notice) {
+            const code = String(notice.code || "UNKNOWN").toUpperCase();
+            const detail = String(notice.detail || notice.reason || "");
+            if (/insufficient[ _-]?(?:balance|funds)|quota\s+(?:is\s+)?exhausted|usage\s+limit|free\s+quota|recharge|wallet|余额不足|额度(?:不足|耗尽|已用完)|钱包余额|充值后继续使用/iu.test(detail)) {
+                return "账户额度不足或已用完";
+            }
+            const reasons = {
+                TRANSPORT: "网络连接或传输中断",
+                TIMEOUT: "模型请求超时",
+                RATE_LIMIT: "模型服务暂时限流，请稍后重试",
+                SERVER: "模型服务端暂时异常",
+                EMPTY_RESPONSE: "模型未返回有效内容",
+                QUOTA: "账户额度不足或已用完",
+                AUTH: "模型认证失败，请检查登录状态或 API Key",
+                AUTHENTICATION: "模型认证失败，请检查登录状态或 API Key",
+                UNAUTHORIZED: "模型认证失败，请检查登录状态或 API Key",
+                ACCOUNT: "账户或登录状态异常",
+                SIGN_IN: "账户或登录状态异常",
+                SIGNIN: "账户或登录状态异常",
+                BAD_REQUEST: "请求参数不被当前模型接受",
+                INVALID_REQUEST: "请求参数不被当前模型接受",
+                UNKNOWN: "未知模型请求错误"
+            };
+            return reasons[code] ?? "模型请求失败，请查看日志了解详情";
+        }
+
+        // Inline notice: one slim row above the composer. Data arrives from the
+        // Host snapshot route, never from an internal event relay.
         function AutoContinueDock({ store, t, sessionId }) {
-            const notice = React.useSyncExternalStore(store.subscribe, store.get, store.get);
+            const notices = React.useSyncExternalStore(store.subscribe, store.get, store.get);
+            const relevant = sessionId === undefined ? notices : notices.filter((notice) => notice.sessionId === sessionId);
+            const notice = relevant[relevant.length - 1];
             if (!notice) return null;
-            if (notice.sessionId !== undefined && sessionId !== undefined && notice.sessionId !== sessionId) return null;
             const retry = notice.kind === "retry";
             const accent = retry ? THEME.warnText : notice.kind === "blocked" ? THEME.accent : THEME.dangerText;
             const title = retry ? t("noticeRetry") : notice.kind === "halt" ? t("noticeHalt") : t("noticeBlocked");
             const reason = chineseFailureReason(notice);
             const detail = notice.code
                 ? [
-                    `${t("failureCode")} `,
+                    t("failureCode") + " ",
                     h("span", { key: "code", style: { color: THEME.dangerText, fontWeight: 600 } }, notice.code),
-                    `：${reason}`
+                    "：" + reason
                 ]
                 : [reason];
-            if (notice.attempt !== null) detail.unshift(t("attempt", { attempt: notice.attempt, max: notice.max }), " · ");
-            // The notice follows the DSH theme instead of pinning black on
-            // white: a fixed black bar was unreadable-on-dark and clashed with
-            // the light theme. The accent stripe/dot still marks severity.
+            if (notice.attempt !== undefined && notice.attempt !== null) detail.unshift(t("attempt", { attempt: notice.attempt, max: notice.max }), " · ");
             return h("div", {
                 role: "status",
                 "aria-live": "polite",
@@ -610,7 +600,7 @@ window.__ModuleLoader__.load({
                     margin: "0 auto 6px",
                     padding: "6px 10px",
                     borderRadius: 8,
-                    borderLeft: `3px solid ${accent}`,
+                    borderLeft: "3px solid " + accent,
                     background: THEME.surface,
                     color: THEME.text,
                     fontSize: 12,
@@ -624,19 +614,20 @@ window.__ModuleLoader__.load({
             h("button", {
                 type: "button",
                 "aria-label": t("close"),
-                onClick: () => store.close(),
+                onClick: () => store.dismiss(notice.id),
                 style: { flex: "none", border: "none", background: "transparent", color: THEME.textSecondary, cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }
             }, "×")
             );
         }
 
         // -------------------------------------------------------------------
-        // Settings page: settings.plugins.tab
+        // Settings page: settings.plugins.tab. Provider-level retry budgets
+        // belong to the official provider policy; this form only configures
+        // the extra provider-independent layer.
         // -------------------------------------------------------------------
         const NUMERIC_FIELDS = [
             ["maxAttempts", 1, 50, 1],
-            ["delayMs", 0, 60000, 100],
-            ["providerRetryMaxRetries", 0, 10, 1]
+            ["delayMs", 0, 60000, 100]
         ];
 
         function pickValues(value) {
@@ -645,33 +636,25 @@ window.__ModuleLoader__.load({
                 enabled: source.enabled === true,
                 maxAttempts: Number.isFinite(source.maxAttempts) ? source.maxAttempts : 6,
                 delayMs: Number.isFinite(source.delayMs) ? source.delayMs : 1500,
-                providerRetryMaxRetries: Number.isFinite(source.providerRetryMaxRetries) ? source.providerRetryMaxRetries : 0,
                 emitProminentError: source.emitProminentError !== false
             };
         }
 
-        function SettingsPage({ t, settings, getWorkspaceRegistry }) {
-            const [state, setState] = React.useState({ phase: "loading", view: null, draft: null, error: null, available: [] });
+        function SettingsPage({ t, settings }) {
+            const [state, setState] = React.useState({ phase: "loading", view: null, draft: pickValues(undefined), error: null, available: [] });
             const [saveState, setSaveState] = React.useState("idle");
 
             const load = React.useCallback(async () => {
                 setSaveState("idle");
                 setState((current) => ({ ...current, phase: "loading", error: null }));
                 try {
-                    // `ctx.remote.settings` is the Remote namespace service; the
-                    // raw `ctx.get("remote")` object only carries `$on/$mount`.
                     if (!settings || typeof settings.describe !== "function") {
                         setState({ phase: "unavailable", view: null, draft: pickValues(undefined), error: null, available: [] });
                         return;
                     }
-                    // Remote namespace methods answer with a RemoteResult
-                    // ({ ok: true, value } / { ok: false, error }), not the raw
-                    // view. Accept a bare view too so a future API can simplify.
                     const response = await settings.describe();
                     const described = response && response.ok === true ? response.value : response;
-                    if (response && response.ok === false) {
-                        throw new Error(response.error?.message ?? "settings.describe failed");
-                    }
+                    if (response && response.ok === false) throw new Error(response.error?.message ?? "settings.describe failed");
                     const namespaces = described?.namespaces ?? [];
                     const view = namespaces.find((entry) => entry.ns === "cockpit")
                         ?? namespaces.find((entry) => entry.ns === "include:cockpit")
@@ -703,7 +686,7 @@ window.__ModuleLoader__.load({
                 try {
                     const ops = [];
                     const current = pickValues(state.view.value);
-                    for (const key of ["enabled", "emitProminentError", "maxAttempts", "delayMs", "providerRetryMaxRetries"]) {
+                    for (const key of ["enabled", "emitProminentError", "maxAttempts", "delayMs"]) {
                         if (state.draft[key] !== current[key]) ops.push({ op: "set", path: [key], value: state.draft[key] });
                     }
                     if (ops.length === 0) {
@@ -720,7 +703,7 @@ window.__ModuleLoader__.load({
                             value: { ...state.view.value, ...state.draft },
                             revision: typeof returned?.revision === "number" ? returned.revision : state.view.revision + 1
                         };
-                    setState({ phase: "ready", view, draft: pickValues(view.value), error: null });
+                    setState({ phase: "ready", view, draft: pickValues(view.value), error: null, available: state.available });
                     setSaveState("saved");
                 } catch (error) {
                     setSaveState("idle");
@@ -729,42 +712,23 @@ window.__ModuleLoader__.load({
             };
 
             const draft = state.draft ?? pickValues(undefined);
-            const total = (1 + Number(draft.providerRetryMaxRetries || 0)) * (1 + Number(draft.maxAttempts || 0));
             const busy = saveState === "saving";
-            const numericIncomplete = NUMERIC_FIELDS.some(([key]) => draft[key] === "");
+            const incomplete = NUMERIC_FIELDS.some(([key]) => draft[key] === "");
 
             return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
                 h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("title")),
                 h("p", { style: { margin: "0 0 18px", fontSize: 13, color: THEME.textSecondary } }, t("description")),
-                h("div", {
-                    style: {
-                        ...cardBase,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        flexWrap: "wrap",
-                        gap: 16,
-                        marginBottom: 16,
-                        padding: "14px 16px",
-                        boxShadow: "none"
-                    }
-                },
-                h("div", { style: { flex: "1 1 260px", minWidth: 0 } },
-                    h("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 4 } }, t("emptyCleanupTitle")),
-                    h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("emptyCleanupDescription"))
-                ),
-                h(EmptySessionCleanup, { t, getWorkspaceRegistry })
-                ),
                 state.phase === "loading" ? h("div", { style: { fontSize: 13 } }, t("loading")) : null,
                 state.phase === "unavailable"
                     ? h("div", { style: { fontSize: 13, color: THEME.warnText, marginBottom: 8 } },
                         t("unavailable"),
                         state.available.length > 0
                             ? h("div", { style: { marginTop: 4, fontSize: 12, color: THEME.textSecondary } },
-                                `${t("registered")}${state.available.join(", ")}`)
+                                "已注册：" + state.available.join(", "))
                             : null)
                     : null,
-                state.error ? h("div", { style: { fontSize: 13, color: THEME.dangerText, marginBottom: 12 } }, `${state.phase === "error" ? t("loadFailed") : t("saveFailed")}${state.error}`) : null,
+                state.error ? h("div", { style: { fontSize: 13, color: THEME.dangerText, marginBottom: 12 } },
+                    (state.phase === "error" ? t("loadFailed") : t("saveFailed")) + state.error) : null,
                 state.phase === "ready" || state.phase === "unavailable"
                     ? h("div", { style: { ...cardBase, padding: "16px 18px", boxShadow: "none" } },
                         h("label", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16, cursor: "pointer" } },
@@ -773,7 +737,7 @@ window.__ModuleLoader__.load({
                         ),
                         h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 16 } },
                             NUMERIC_FIELDS.map(([key, min, max, step]) => h("label", { key, style: { display: "block" } },
-                                h("div", { style: labelStyle }, t(key === "providerRetryMaxRetries" ? "providerRetry" : key)),
+                                h("div", { style: labelStyle }, t(key)),
                                 h("input", {
                                     type: "number",
                                     min,
@@ -796,22 +760,93 @@ window.__ModuleLoader__.load({
                             h("input", { type: "checkbox", checked: draft.emitProminentError, onChange: (event) => set("emitProminentError", event.target.checked) }),
                             h("span", { style: { fontSize: 13 } }, t("prominent"))
                         ),
+                        h("div", { style: { marginTop: 14, fontSize: 12, lineHeight: 1.6, color: THEME.textSecondary } },
+                            t("retryHint", { max: draft.maxAttempts }))
                     )
                     : null,
-                h("div", { style: { ...cardBase, marginTop: 16, padding: "16px 18px", boxShadow: "none", background: THEME.sunken } },
-                    h("div", { style: { fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: THEME.textSecondary, marginBottom: 8 } }, t("formulaTitle")),
-                    h("div", { style: { fontSize: 14, lineHeight: 1.7, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } },
-                        h("div", null, t("formula")),
-                        h("div", { style: { marginTop: 6, color: THEME.textSecondary } },
-                            `= (1 + ${draft.providerRetryMaxRetries}) × (1 + ${draft.maxAttempts}) = ${total}`),
-                        h("div", { style: { marginTop: 6, fontSize: 20, fontWeight: 700 } }, `${total} ${t("requestUnit")}`)
-                    )
-                ),
                 h("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center" } },
-                    h("button", { type: "button", onClick: save, disabled: busy || numericIncomplete || state.phase !== "ready", style: { ...buttonStyle, opacity: busy || numericIncomplete || state.phase !== "ready" ? 0.55 : 1 } },
+                    h("button", { type: "button", onClick: save, disabled: busy || incomplete || state.phase !== "ready", style: { ...buttonStyle, opacity: busy || incomplete || state.phase !== "ready" ? 0.55 : 1 } },
                         busy ? t("saving") : t("save")),
                     h("button", { type: "button", onClick: load, style: ghostButtonStyle }, t("reload")),
                     saveState === "saved" ? h("span", { style: { fontSize: 12, color: THEME.successText } }, t("saved")) : null
+                )
+            );
+        }
+
+        function CleanTempButton({ t, send }) {
+            const [phase, setPhase] = React.useState({ status: "idle", error: "" });
+            React.useEffect(() => {
+                if (phase.status !== "sent" && phase.status !== "error") return undefined;
+                const timer = setTimeout(() => setPhase({ status: "idle", error: "" }), 4000);
+                return () => clearTimeout(timer);
+            }, [phase.status]);
+            const click = async () => {
+                if (phase.status === "sending") return;
+                setPhase({ status: "sending", error: "" });
+                try {
+                    const result = await send();
+                    if (result && result.ok === false) throw new Error(result.error?.message ?? "send failed");
+                    setPhase({ status: "sent", error: "" });
+                } catch (error) {
+                    setPhase({ status: "error", error: error instanceof Error ? error.message : String(error) });
+                }
+            };
+            const label = phase.status === "sending" ? t("sending") : phase.status === "sent" ? t("sent") : t("cleanTemp");
+            return h("div", {
+                style: {
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "0 2px"
+                }
+            },
+            phase.status === "error" ? h("span", {
+                role: "alert",
+                style: { fontSize: 11, color: THEME.dangerText, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+            }, t("sendFailed") + phase.error) : null,
+            h("button", {
+                type: "button",
+                "aria-label": t("cleanTempHint"),
+                disabled: phase.status === "sending",
+                onClick: click,
+                style: {
+                    ...ghostButtonStyle,
+                    padding: "3px 9px",
+                    fontSize: 11,
+                    lineHeight: "16px",
+                    borderRadius: 999,
+                    opacity: phase.status === "sending" ? 0.6 : 1
+                }
+            }, label)
+            );
+        }
+
+        // Settings section: the empty-session cleanup used to live above the
+        // auto-continue form. It is a first-class section now.
+        function CleanupSection({ t, getWorkspaceRegistry }) {
+            return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
+                h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("cleanupTitle")),
+                h("p", { style: { margin: "0 0 18px", fontSize: 13, color: THEME.textSecondary } }, t("cleanupDescription")),
+                h("div", {
+                    style: {
+                        ...cardBase,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: 16,
+                        padding: "14px 16px",
+                        boxShadow: "none"
+                    }
+                },
+                h("div", { style: { flex: "1 1 260px", minWidth: 0 } },
+                    h("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 4 } }, t("emptyCleanupTitle")),
+                    h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("emptyCleanupDescription"))
+                ),
+                h(EmptySessionCleanup, { t, getWorkspaceRegistry })
                 )
             );
         }
@@ -838,15 +873,10 @@ window.__ModuleLoader__.load({
                 const downloadStore = createDownloadStore();
                 const cockpitUi = {
                     name: "cockpit-ui",
-                    inject: ["slots", "locale", "remote", "remote.settings"],
+                    inject: ["slots", "locale", "remote", "remote.settings", "sessions"],
                     apply(uiCtx) {
                         uiCtx.effect(() => uiCtx.locale.register(NS, { zh: DICTS.zh, en: DICTS.en }), "dsh-cockpit: dictionaries");
                         const t = uiCtx.locale.bind(NS);
-                        // `ctx.remote` resolves the dotted `remote.settings`
-                        // namespace accessor; `ctx.get("remote")` would only
-                        // return the carrier service (no `.settings`).
-                        const remote = uiCtx.remote;
-                        const settings = remote?.settings;
                         const getWorkspaceRegistry = () => {
                             try {
                                 return uiCtx.remote?.workspaceRegistry;
@@ -855,20 +885,6 @@ window.__ModuleLoader__.load({
                             }
                         };
 
-                        if (remote && typeof remote.$on === "function") {
-                            uiCtx.effect(() => {
-                                const offNotices = remote.$on("api-session/error", (sessionId, message) => {
-                                    const notice = parseNotice(message, sessionId);
-                                    if (notice) noticeStore.show(notice);
-                                    const download = parseDownloadMessage(message);
-                                    if (download) downloadStore.update(download);
-                                });
-                                return () => {
-                                    if (typeof offNotices === "function") offNotices();
-                                };
-                            }, "dsh-cockpit: notice and download relays");
-                        }
-
                         uiCtx.slots.inject("conversation.session.header.utilities", () => uiCtx.slots.register({
                             name: "conversation.session.header.utilities",
                             id: "cockpit-download-activity",
@@ -876,12 +892,33 @@ window.__ModuleLoader__.load({
                             locale: NS,
                             inject: () => ({ store: downloadStore })
                         }, DownloadActivityCard));
+
+                        uiCtx.slots.inject("conversation.input.dock", () => uiCtx.slots.register({
+                            name: "conversation.input.dock",
+                            id: "cockpit-clean-temp",
+                            order: 80,
+                            locale: NS,
+                            inject: (sessionId) => ({ t, send: () => sendUserText(uiCtx.sessions, sessionId, CLEAN_TEMP_MESSAGE) })
+                        }, CleanTempButton));
+
+                        uiCtx.slots.inject("settings.section", () => uiCtx.slots.register({
+                            name: "settings.section",
+                            id: "cockpit-cleanup",
+                            order: 46,
+                            label: () => t("cleanupSection"),
+                            icon: "archive",
+                            locale: NS,
+                            inject: () => ({ t, getWorkspaceRegistry })
+                        }, CleanupSection));
+
+                        const settings = uiCtx.remote?.settings;
+
                         uiCtx.slots.inject("conversation.input.dock", () => uiCtx.slots.register({
                             name: "conversation.input.dock",
                             id: "cockpit-auto-continue-notice",
                             order: 90,
                             locale: NS,
-                            inject: () => ({ store: noticeStore, t })
+                            inject: (sessionId) => ({ store: noticeStore, t, sessionId })
                         }, AutoContinueDock));
 
                         uiCtx.slots.inject("settings.plugins.tab", () => uiCtx.slots.register({
@@ -890,8 +927,40 @@ window.__ModuleLoader__.load({
                             order: 100,
                             label: () => t("tab"),
                             locale: NS,
-                            inject: () => ({ t, settings, getWorkspaceRegistry })
+                            inject: () => ({ t, settings })
                         }, SettingsPage));
+
+                        try {
+                            uiCtx.effect(() => {
+                                if (typeof document === "undefined" || typeof fetch !== "function") return;
+                                let stopped = false;
+                                let timer;
+                                const poll = async () => {
+                                    try {
+                                        const response = await fetch(AUTO_CONTINUE_ROUTE, {
+                                            method: "GET",
+                                            cache: "no-store",
+                                            headers: { accept: "application/json" }
+                                        });
+                                        if (response.ok) {
+                                            const payload = await response.json();
+                                            noticeStore.replace(payload?.value?.notices);
+                                        }
+                                    } catch {
+                                        /* the host route may be unavailable during startup */
+                                    }
+                                    if (!stopped) timer = setTimeout(poll, 1200);
+                                };
+                                poll();
+                                return () => {
+                                    stopped = true;
+                                    clearTimeout(timer);
+                                    noticeStore.clear();
+                                };
+                            }, "dsh-cockpit: auto-continue polling");
+                        } catch (error) {
+                            console.warn("[dsh-cockpit] auto-continue polling skipped:", error);
+                        }
 
                         try {
                             uiCtx.effect(() => {

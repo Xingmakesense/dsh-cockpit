@@ -45,7 +45,7 @@
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `false`（patch 设为 `true`） | 是否覆盖官方重试策略 |
-| `maxAttempts` | `6` | 覆盖后的 `retryPolicy.maxRetries` |
+| `providerRetryMaxRetries` | `3` | 覆盖后的 `retryPolicy.maxRetries`，对所有提供方生效 |
 | `delayMs` | `1500` | 覆盖后的 `initialDelayMs` |
 | `emitProminentError` | `true` | 是否发布提示快照 |
 | `retryableCodes` / `blockedCodes` | 见 `CONTINUE_DEFAULTS` | 参与/不参与重试的故障码 |

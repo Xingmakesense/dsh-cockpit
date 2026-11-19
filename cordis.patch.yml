@@ -3,12 +3,13 @@
 #
 # Auto-continue overrides the official retryPolicy through the documented
 # agent/request-error waterfall; the official retry executor performs the
-# retries with the policy configured here.
+# retries with the policy configured here. providerRetryMaxRetries is the
+# forced request-retry budget applied to every provider.
 - insert:
     - id: cockpit
       name: dsh-cockpit
       config:
         enabled: true
-        maxAttempts: 6
+        providerRetryMaxRetries: 3
         delayMs: 1500
         emitProminentError: true

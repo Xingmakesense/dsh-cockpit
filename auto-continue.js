@@ -17,7 +17,7 @@ import z from "./vendor/schemastery.mjs";
 /** Defaults. */
 const CONTINUE_DEFAULTS = {
     enabled: false,
-    maxAttempts: 6,
+    providerRetryMaxRetries: 3,
     delayMs: 1_500,
     retryableCodes: ["TRANSPORT", "TIMEOUT", "RATE_LIMIT", "SERVER", "EMPTY_RESPONSE", "UNKNOWN"],
     blockedCodes: ["AUTH", "AUTHENTICATION", "UNAUTHORIZED", "QUOTA", "ACCOUNT", "SIGN_IN", "SIGNIN", "BAD_REQUEST", "INVALID_REQUEST"],
@@ -42,7 +42,11 @@ function isVolatileRef(value) {
  */
 export const Config = z.object({
     enabled: z.boolean().default(CONTINUE_DEFAULTS.enabled),
-    maxAttempts: z.number().min(1).max(50).default(CONTINUE_DEFAULTS.maxAttempts),
+    /**
+     * Forced provider retry budget: replaces the official retryPolicy maxRetries
+     * for every provider, matching the old plugin's override key.
+     */
+    providerRetryMaxRetries: z.number().min(0).max(10).default(CONTINUE_DEFAULTS.providerRetryMaxRetries),
     delayMs: z.number().min(0).max(60_000).default(CONTINUE_DEFAULTS.delayMs),
     emitProminentError: z.boolean().default(CONTINUE_DEFAULTS.emitProminentError),
     retryableCodes: z.array(z.string()).default(CONTINUE_DEFAULTS.retryableCodes),
@@ -59,7 +63,9 @@ export function normalizeContinueConfig(config) {
     const strArr = (value, fallback) => (Array.isArray(value) && value.length > 0 ? value : fallback);
     return {
         enabled: c.enabled === true,
-        maxAttempts: typeof c.maxAttempts === "number" && c.maxAttempts >= 1 ? Math.floor(c.maxAttempts) : CONTINUE_DEFAULTS.maxAttempts,
+        providerRetryMaxRetries: typeof c.providerRetryMaxRetries === "number" && c.providerRetryMaxRetries >= 0
+            ? Math.floor(c.providerRetryMaxRetries)
+            : CONTINUE_DEFAULTS.providerRetryMaxRetries,
         delayMs: typeof c.delayMs === "number" && c.delayMs >= 0 ? c.delayMs : CONTINUE_DEFAULTS.delayMs,
         retryableCodes: strArr(c.retryableCodes, CONTINUE_DEFAULTS.retryableCodes).map((code) => String(code).toUpperCase()),
         blockedCodes: strArr(c.blockedCodes, CONTINUE_DEFAULTS.blockedCodes).map((code) => String(code).toUpperCase()),
@@ -130,7 +136,7 @@ export function resolveRetryPolicy(cfg, incoming) {
     const fallback = incoming && typeof incoming === "object" ? incoming : {};
     return {
         mode: "normal",
-        maxRetries: cfg.maxAttempts,
+        maxRetries: cfg.providerRetryMaxRetries,
         retryableCodes,
         initialDelayMs: cfg.delayMs,
         maxDelayMs: Math.max(cfg.delayMs, Number.isFinite(fallback.maxDelayMs) ? fallback.maxDelayMs : 10_000),
@@ -220,7 +226,7 @@ export function installAutoContinue(ctx, config) {
             publish(session.id, kind, {
                 code: failure.code,
                 detail: failure.message.slice(0, 300),
-                max: cfg.maxAttempts
+                max: cfg.providerRetryMaxRetries
             });
         })
     ];
@@ -266,7 +272,7 @@ export function installAutoContinue(ctx, config) {
     try {
         ctx.logger?.info?.(
             "[dsh-cockpit] auto-continue 已上线（覆盖官方 retryPolicy：上限 " +
-            cfg.maxAttempts + " 次·初始延迟 " + cfg.delayMs + "ms·提示 " + (cfg.emitProminentError ? "开" : "关") + "）"
+            cfg.providerRetryMaxRetries + " 次·初始延迟 " + cfg.delayMs + "ms·提示 " + (cfg.emitProminentError ? "开" : "关") + "）"
         );
         if (!cfg.enabled) ctx.logger?.info?.("[dsh-cockpit] auto-continue 当前未启用（enabled: false），可在 设置 → 插件 → 自动续轮 中开启。");
     } catch {

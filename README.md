@@ -1,4 +1,4 @@
-# DSH Cockpit v3.1.1
+# DSH Cockpit v3.1.2
 
 DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自动续轮、会话归档与清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计与孤儿附件回收。
 
@@ -12,7 +12,7 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 - 监听器以 `prepend` 先于官方重试监听器运行，覆盖策略后通过 `next()` 交给官方 `dsh-llm-retry` 执行；重试、退避与取消全部由官方控件完成。
 - 重试在当前步骤内进行，不写入任何对话消息，也不会产生新的用户消息。
 - 不可自愈的故障码（`AUTH` / `QUOTA` / `BAD_REQUEST` 等）会从可重试集合中剔除，直接保留原始错误。
-- 「设置 → 插件 → 自动续轮」：启用开关、重试上限、初始延迟、提示开关。
+- 「设置 → 插件 → 自动续轮」：启用开关、请求重试上限、初始延迟、提示开关。
 - 续轮进度来自官方持久化 `llm/retry` 事件，最终失败来自 `turn/end`；提示通过同源快照路由展示在输入框上方。
 
 ### 会话管理
@@ -61,13 +61,13 @@ DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自�
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `enabled` | `true`（随包 patch） | 是否覆盖官方重试策略 |
-| `maxAttempts` | `6` | 覆盖后的官方 `retryPolicy.maxRetries`（1–50） |
+| `providerRetryMaxRetries` | `3` | 覆盖后的官方 `retryPolicy.maxRetries`，对所有提供方生效（0–10） |
 | `delayMs` | `1500` | 覆盖后的初始重试延迟（毫秒） |
 | `emitProminentError` | `true` | 是否显示续轮提示 |
 | `retryableCodes` | `TRANSPORT`/`TIMEOUT`/`RATE_LIMIT`/`SERVER`/`EMPTY_RESPONSE`/`UNKNOWN` | 参与重试的故障码 |
 | `blockedCodes` | `AUTH`/`QUOTA`/… | 永不重试的故障码，会从可重试集合中剔除 |
 
-覆盖后的策略保持官方 `ResolvedRetryPolicy` 的 `normal` 模式：`maxRetries` 与 `retryableCodes` 取本插件配置，`maxDelayMs`、`jitterRatio` 沿用官方提供方策略（缺失时使用 10 秒与 0.1）。
+覆盖后的策略保持官方 `ResolvedRetryPolicy` 的 `normal` 模式：`maxRetries` 固定取 `providerRetryMaxRetries`，`retryableCodes` 取本插件配置，`maxDelayMs`、`jitterRatio` 沿用官方提供方策略（缺失时使用 10 秒与 0.1）。
 
 ## 使用要点
 

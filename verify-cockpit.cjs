@@ -103,7 +103,7 @@ function checkClientArtifact() {
     }
 
     // Non-public carriers must not leak back into the generated client.
-    for (const needle of ["【自动续轮", "providerRetryMaxRetries", "agent/request-error", "runtime-context", "api-session/error"]) {
+    for (const needle of ["【自动续轮", "agent/request-error", "runtime-context", "api-session/error"]) {
         assert(!client.includes(needle), `client.js still contains a non-public surface: ${needle}`);
     }
 
@@ -165,7 +165,7 @@ function checkLocaleMeta() {
 function checkManifest() {
     const pkg = JSON.parse(read("./package.json"));
     assert(pkg.name === "dsh-cockpit", "package name must stay dsh-cockpit");
-    assert(pkg.version === "3.1.1", "package.json version must stay 3.1.1");
+    assert(pkg.version === "3.1.2", "package.json version must stay 3.1.2");
     assert(pkg.dsh?.bundle?.patch === "./cordis.patch.yml", "dsh.bundle.patch must point at cordis.patch.yml");
     assert(pkg.dsh?.client?.platform === "web", "dsh.client.platform must stay web");
 

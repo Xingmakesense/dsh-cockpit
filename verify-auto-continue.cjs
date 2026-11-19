@@ -11,18 +11,18 @@ async function main() {
 
     const off = normalizeContinueConfig(undefined);
     assert(off.enabled === false, "auto-continue must stay disabled unless configured");
-    assert(off.maxAttempts === 6 && off.delayMs === 1500, "defaults must stay stable");
+    assert(off.providerRetryMaxRetries === 3 && off.delayMs === 1500, "defaults must stay stable");
     assert(off.retryableCodes.includes("TIMEOUT") && off.blockedCodes.includes("AUTH"), "code lists must match");
 
     const on = normalizeContinueConfig({
         enabled: true,
-        maxAttempts: 3,
+        providerRetryMaxRetries: 3,
         delayMs: 250,
         emitProminentError: true,
         retryableCodes: ["timeout", "auth", "server"],
         blockedCodes: ["auth"]
     });
-    assert(on.enabled === true && on.maxAttempts === 3 && on.delayMs === 250, "config must be normalized");
+    assert(on.enabled === true && on.providerRetryMaxRetries === 3 && on.delayMs === 250, "config must be normalized");
     assert(on.retryableCodes[0] === "TIMEOUT", "codes must be upper-cased");
 
     assert(classifyContinueFailure({ code: "ETIMEDOUT", message: "x" }).code === "TIMEOUT", "error aliases must classify");

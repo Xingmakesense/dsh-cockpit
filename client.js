@@ -1142,12 +1142,12 @@ window.__ModuleLoader__.load({
                 sendFailed: "发送失败：",
                 tab: "自动续轮",
                 title: "自动续轮",
-                description: "覆盖官方提供方重试策略：失败请求按本页设置自动重试，重试由官方重试执行器完成；不会写入任何对话消息。",
+                description: "覆盖官方提供方重试策略：失败请求按本页设置的请求重试上限自动重试，重试由官方重试执行器完成；不会写入任何对话消息。",
                 enabled: "启用自动续轮",
-                maxAttempts: "重试上限",
+                providerRetryMaxRetries: "请求重试上限",
                 delayMs: "续轮延迟（毫秒）",
                 prominent: "显示自动续轮提示",
-                retryHint: "官方 retryPolicy 会被本页设置覆盖：最多重试 {max} 次，初始延迟 {delay} ms。",
+                retryHint: "官方 retryPolicy 会被本页设置覆盖：请求最多重试 {max} 次，初始延迟 {delay} ms。",
                 save: "保存",
                 saving: "保存中…",
                 saved: "已保存",
@@ -1181,12 +1181,12 @@ window.__ModuleLoader__.load({
                 sendFailed: "Send failed: ",
                 tab: "Auto-continue",
                 title: "Auto-continue",
-                description: "Override the official provider retry policy: failed requests retry with these settings, executed by the official retry engine. No chat message is written.",
+                description: "Override the official provider retry policy: failed requests retry with the configured request limit, executed by the official retry engine. No chat message is written.",
                 enabled: "Enable auto-continue",
-                maxAttempts: "Retry limit",
+                providerRetryMaxRetries: "Request retry limit",
                 delayMs: "Delay (ms)",
                 prominent: "Show auto-continue notices",
-                retryHint: "The official retryPolicy is replaced by these settings: up to {max} retries with a {delay} ms initial delay.",
+                retryHint: "The official retryPolicy is replaced by these settings: up to {max} request retries with a {delay} ms initial delay.",
                 save: "Save",
                 saving: "Saving…",
                 saved: "Saved",
@@ -1723,7 +1723,7 @@ window.__ModuleLoader__.load({
         // the extra provider-independent layer.
         // -------------------------------------------------------------------
         const NUMERIC_FIELDS = [
-            ["maxAttempts", 1, 50, 1],
+            ["providerRetryMaxRetries", 0, 10, 1],
             ["delayMs", 0, 60000, 100]
         ];
 
@@ -1731,7 +1731,7 @@ window.__ModuleLoader__.load({
             const source = value && typeof value === "object" ? value : {};
             return {
                 enabled: source.enabled === true,
-                maxAttempts: Number.isFinite(source.maxAttempts) ? source.maxAttempts : 6,
+                providerRetryMaxRetries: Number.isFinite(source.providerRetryMaxRetries) ? source.providerRetryMaxRetries : 3,
                 delayMs: Number.isFinite(source.delayMs) ? source.delayMs : 1500,
                 emitProminentError: source.emitProminentError !== false
             };
@@ -1783,7 +1783,7 @@ window.__ModuleLoader__.load({
                 try {
                     const ops = [];
                     const current = pickValues(state.view.value);
-                    for (const key of ["enabled", "emitProminentError", "maxAttempts", "delayMs"]) {
+                    for (const key of ["enabled", "emitProminentError", "providerRetryMaxRetries", "delayMs"]) {
                         if (state.draft[key] !== current[key]) ops.push({ op: "set", path: [key], value: state.draft[key] });
                     }
                     if (ops.length === 0) {
@@ -1858,7 +1858,7 @@ window.__ModuleLoader__.load({
                             h("span", { style: { fontSize: 13 } }, t("prominent"))
                         ),
                         h("div", { style: { marginTop: 14, fontSize: 12, lineHeight: 1.6, color: THEME.textSecondary } },
-                            t("retryHint", { max: draft.maxAttempts, delay: draft.delayMs }))
+                            t("retryHint", { max: draft.providerRetryMaxRetries, delay: draft.delayMs }))
                     )
                     : null,
                 h("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center" } },

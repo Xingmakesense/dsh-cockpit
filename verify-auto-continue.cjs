@@ -19,12 +19,15 @@ async function main() {
         enabled: true,
         providerRetryMaxRetries: 3,
         maxAttempts: 3,
+        autoFlushQueue: true,
         delayMs: 250,
         emitProminentError: true,
         retryableCodes: ["timeout", "auth", "server"],
         blockedCodes: ["auth"]
     });
     assert(on.enabled === true && on.providerRetryMaxRetries === 3 && on.maxAttempts === 3 && on.delayMs === 250, "config must be normalized");
+    assert(on.autoFlushQueue === true, "autoFlushQueue must normalize");
+    assert(off.autoFlushQueue === false, "autoFlushQueue must default off");
     assert(on.retryableCodes[0] === "TIMEOUT", "codes must be upper-cased");
 
     assert(classifyContinueFailure({ code: "ETIMEDOUT", message: "x" }).code === "TIMEOUT", "error aliases must classify");

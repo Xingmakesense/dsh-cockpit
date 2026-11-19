@@ -1147,6 +1147,8 @@ window.__ModuleLoader__.load({
                 maxAttempts: "额外续轮次数",
                 delayMs: "续轮延迟（毫秒）",
                 prominent: "显示自动续轮提示",
+                autoFlushQueue: "会话结束后自动发送排队的提示词",
+                autoFlushQueueHint: "开启后，当前轮次停止输出时，已排队的提示词会按原顺序自动发出；关闭则保持原样。",
                 retryHint: "覆盖官方重试策略：每次请求最多重试 {provider} 次；官方重试结束后，再额外续轮 {max} 次（每轮都重新获得同样的重试预算）。",
                 formulaTitle: "最多尝试次数",
                 formula: "（1 + 单次请求重试次数）×（1 + 额外续轮次数）",
@@ -1307,6 +1309,8 @@ window.__ModuleLoader__.load({
                 maxAttempts: "Extra continuations",
                 delayMs: "Delay (ms)",
                 prominent: "Show auto-continue notices",
+                autoFlushQueue: "Send queued prompts after the session stops",
+                autoFlushQueueHint: "When enabled, prompts already queued are sent in order after the current turn stops; when disabled, they stay queued.",
                 retryHint: "The official retry policy is replaced here: up to {provider} retries per request, then up to {max} extra continuation rounds, each with the same retry budget.",
                 formulaTitle: "Maximum attempts",
                 formula: "(1 + retries per request) × (1 + extra continuations)",
@@ -1958,6 +1962,7 @@ window.__ModuleLoader__.load({
                 providerRetryMaxRetries: Number.isFinite(source.providerRetryMaxRetries) ? source.providerRetryMaxRetries : 3,
                 maxAttempts: Number.isFinite(source.maxAttempts) ? source.maxAttempts : 6,
                 delayMs: Number.isFinite(source.delayMs) ? source.delayMs : 1500,
+                autoFlushQueue: source.autoFlushQueue === true,
                 emitProminentError: source.emitProminentError !== false
             };
         }
@@ -2008,7 +2013,7 @@ window.__ModuleLoader__.load({
                 try {
                     const ops = [];
                     const current = pickValues(state.view.value);
-                    for (const key of ["enabled", "emitProminentError", "providerRetryMaxRetries", "maxAttempts", "delayMs"]) {
+                    for (const key of ["enabled", "emitProminentError", "autoFlushQueue", "providerRetryMaxRetries", "maxAttempts", "delayMs"]) {
                         if (state.draft[key] !== current[key]) ops.push({ op: "set", path: [key], value: state.draft[key] });
                     }
                     if (ops.length === 0) {
@@ -2083,6 +2088,12 @@ window.__ModuleLoader__.load({
                             h("input", { type: "checkbox", checked: draft.emitProminentError, onChange: (event) => set("emitProminentError", event.target.checked) }),
                             h("span", { style: { fontSize: 13 } }, t("prominent"))
                         ),
+                        h("label", { style: { display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginTop: 12 } },
+                            h("input", { type: "checkbox", checked: draft.autoFlushQueue, onChange: (event) => set("autoFlushQueue", event.target.checked) }),
+                            h("span", { style: { fontSize: 13 } }, t("autoFlushQueue"))
+                        ),
+                        h("div", { style: { marginTop: 6, fontSize: 12, lineHeight: 1.6, color: THEME.textSecondary } },
+                            t("autoFlushQueueHint")),
                         h("div", { style: { marginTop: 14, fontSize: 12, lineHeight: 1.6, color: THEME.textSecondary } },
                             t("retryHint", { provider: draft.providerRetryMaxRetries, max: draft.maxAttempts }))
                     )

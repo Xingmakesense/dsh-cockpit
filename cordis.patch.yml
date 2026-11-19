@@ -12,5 +12,6 @@
         enabled: true
         providerRetryMaxRetries: 3
         maxAttempts: 6
+        autoFlushQueue: false
         delayMs: 1500
         emitProminentError: true

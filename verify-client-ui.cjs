@@ -212,7 +212,7 @@ async function main() {
 
     const locale = locales.find((entry) => entry.ns === "dsh-cockpit");
     assert(locale !== undefined, "cockpit locale namespace must be registered");
-    for (const key of ["cleanupTitle", "cleanupDescription", "cleanTemp", "cleanTempHint", "emptyCleanup", "emptyDeleteConfirm", "tab", "noticeRetry", "noticeExtra", "noticeHalt", "noticeBlocked", "retryHint", "formulaTitle", "formula", "requestUnit", "maxAttempts", "providerRetryMaxRetries"]) {
+    for (const key of ["cleanupTitle", "cleanupDescription", "cleanTemp", "cleanTempHint", "emptyCleanup", "emptyDeleteConfirm", "tab", "noticeRetry", "noticeExtra", "noticeHalt", "noticeBlocked", "retryHint", "formulaTitle", "formula", "requestUnit", "maxAttempts", "providerRetryMaxRetries", "autoFlushQueue", "autoFlushQueueHint"]) {
         assert(typeof locale.dicts.zh[key] === "string" && typeof locale.dicts.en[key] === "string", `locale dictionaries need ${key}`);
     }
 

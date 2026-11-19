@@ -250,6 +250,8 @@ async function main() {
     const dockButton = findNode(buttonTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp");
     assert(dockButton !== undefined, "composer button must render");
     assert(dockButton.props.style?.height === 48, "the composer button height must be 48px (twice the old 24px)");
+    assert(dockButton.props.style?.padding === "0 12px", "the composer button must stay compact horizontally");
+    assert(dockButton.props.style?.fontSize === 14, "the composer button label must stay readable at 14px");
     const noticeText = textOf(buttonTree);
     assert(noticeText.includes("TIMEOUT") && noticeText.includes("attempt"), "the retry notice must render inside the composer row");
     for (const property of ["border", "color"]) {

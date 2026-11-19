@@ -1,4 +1,4 @@
-# DSH Cockpit v3.1.3
+# DSH Cockpit v3.1.4
 
 DSH（DeepSeek Harness）会话工作台套件：覆盖官方重试策略的自动续轮、会话归档与清理、输入框上方的「清理临时产物」按钮、下载进度、删除审计与孤儿附件回收。
 

@@ -156,7 +156,7 @@ async function main() {
 
     const locale = locales.find((entry) => entry.ns === "dsh-cockpit");
     assert(locale !== undefined, "cockpit locale namespace must be registered");
-    for (const key of ["cleanupSection", "cleanupTitle", "cleanTemp", "cleanTempHint", "emptyCleanup", "emptyDeleteConfirm", "tab", "noticeRetry", "noticeHalt", "noticeBlocked", "retryHint"]) {
+    for (const key of ["cleanupTitle", "cleanupDescription", "cleanTemp", "cleanTempHint", "emptyCleanup", "emptyDeleteConfirm", "tab", "noticeRetry", "noticeExtra", "noticeHalt", "noticeBlocked", "retryHint", "formulaTitle", "formula", "requestUnit", "maxAttempts", "providerRetryMaxRetries"]) {
         assert(typeof locale.dicts.zh[key] === "string" && typeof locale.dicts.en[key] === "string", `locale dictionaries need ${key}`);
     }
 
@@ -201,18 +201,17 @@ async function main() {
     downloadStore.clear();
     assert(downloadCard.component({ store: downloadStore }) === null, "cleared downloads must leave the active card");
 
-    // Cleanup section: settings.section with the existing preview/delete flow.
-    const cleanup = registrations.find((entry) => entry.definition.name === "settings.section");
-    assert(cleanup !== undefined, "empty-session cleanup must register a settings section");
-    assert(cleanup.definition.id === "cockpit-cleanup", "cleanup section id changed");
-    assert(cleanup.definition.order === 46, "cleanup section must follow the archive section");
-    assert(cleanup.definition.label() === "dsh-cockpit.cleanupSection", "cleanup section label must be localized");
+    // Cleanup block: compact entry at the top of the archive page.
+    const cleanup = registrations.find((entry) => entry.definition.name === "archive-manager.cleanup");
+    assert(cleanup !== undefined, "empty-session cleanup must register into the archive page header");
+    assert(cleanup.definition.id === "cockpit-cleanup", "cleanup block id changed");
+    assert(!registrations.some((entry) => entry.definition.name === "settings.section"), "cleanup must not keep its own settings page");
     const cleanupProps = cleanup.definition.inject();
     assert(typeof cleanupProps.getWorkspaceRegistry === "function", "cleanup section must resolve the registry lazily");
     const cleanupTree = cleanup.component({ ...cleanupProps, t: (key) => key });
     assert(titledNodes(cleanupTree).length === 0, "the cleanup section must not use native title tooltips");
     const cleanupNode = findNode(cleanupTree, (node) => typeof node.type === "function" && node.type.name === "EmptySessionCleanup");
-    assert(cleanupNode !== undefined, "cleanup component must be embedded in the settings section");
+    assert(cleanupNode !== undefined, "cleanup component must be embedded in the archive page header");
     const cleanupView = cleanupNode.type(cleanupNode.props);
     const cleanupButton = findNode(cleanupView, (node) => node.type === "button" && textOf(node) === "emptyCleanup");
     assert(cleanupButton !== undefined, "cleanup button must be rendered");
@@ -246,10 +245,10 @@ async function main() {
         "the composer row must match the composer card width");
     assert(buttonTree.props.style?.margin === "0 auto", "the composer row must be centered over the composer");
     assert(String(buttonTree.props.style?.justifyContent ?? "") === "flex-start", "the button must be left-aligned");
-    assert(buttonTree.props.style?.height === 48, "the composer row must keep a fixed 48px height");
+    assert(buttonTree.props.style?.height === 32, "the composer row must be 32px high (two thirds of 48px)");
     const dockButton = findNode(buttonTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp");
     assert(dockButton !== undefined, "composer button must render");
-    assert(dockButton.props.style?.height === 48, "the composer button height must be 48px (twice the old 24px)");
+    assert(dockButton.props.style?.height === 32, "the composer button height must be 32px");
     assert(dockButton.props.style?.padding === "0 12px", "the composer button must stay compact horizontally");
     assert(dockButton.props.style?.fontSize === 14, "the composer button label must stay readable at 14px");
     const noticeText = textOf(buttonTree);

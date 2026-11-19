@@ -18,6 +18,7 @@ import z from "./vendor/schemastery.mjs";
 const CONTINUE_DEFAULTS = {
     enabled: false,
     providerRetryMaxRetries: 3,
+    maxAttempts: 6,
     delayMs: 1_500,
     retryableCodes: ["TRANSPORT", "TIMEOUT", "RATE_LIMIT", "SERVER", "EMPTY_RESPONSE", "UNKNOWN"],
     blockedCodes: ["AUTH", "AUTHENTICATION", "UNAUTHORIZED", "QUOTA", "ACCOUNT", "SIGN_IN", "SIGNIN", "BAD_REQUEST", "INVALID_REQUEST"],
@@ -47,6 +48,8 @@ export const Config = z.object({
      * for every provider, matching the old plugin's override key.
      */
     providerRetryMaxRetries: z.number().min(0).max(10).default(CONTINUE_DEFAULTS.providerRetryMaxRetries),
+    /** Extra provider-independent continuations after the official budget is spent. */
+    maxAttempts: z.number().min(1).max(50).default(CONTINUE_DEFAULTS.maxAttempts),
     delayMs: z.number().min(0).max(60_000).default(CONTINUE_DEFAULTS.delayMs),
     emitProminentError: z.boolean().default(CONTINUE_DEFAULTS.emitProminentError),
     retryableCodes: z.array(z.string()).default(CONTINUE_DEFAULTS.retryableCodes),
@@ -66,6 +69,9 @@ export function normalizeContinueConfig(config) {
         providerRetryMaxRetries: typeof c.providerRetryMaxRetries === "number" && c.providerRetryMaxRetries >= 0
             ? Math.floor(c.providerRetryMaxRetries)
             : CONTINUE_DEFAULTS.providerRetryMaxRetries,
+        maxAttempts: typeof c.maxAttempts === "number" && c.maxAttempts >= 1
+            ? Math.floor(c.maxAttempts)
+            : CONTINUE_DEFAULTS.maxAttempts,
         delayMs: typeof c.delayMs === "number" && c.delayMs >= 0 ? c.delayMs : CONTINUE_DEFAULTS.delayMs,
         retryableCodes: strArr(c.retryableCodes, CONTINUE_DEFAULTS.retryableCodes).map((code) => String(code).toUpperCase()),
         blockedCodes: strArr(c.blockedCodes, CONTINUE_DEFAULTS.blockedCodes).map((code) => String(code).toUpperCase()),
@@ -194,18 +200,101 @@ export function installAutoContinue(ctx, config) {
     };
 
     /** Override first, then let the official retry executor enforce the policy. */
-    const override = (payload, next) => {
+    /** Wait for the extra-continuation delay, cancelling with the turn signal. */
+    const cancellableDelay = (delayMs, signal) => {
+        if (delayMs <= 0) return Promise.resolve(!signal?.aborted);
+        if (!signal) {
+            return new Promise((resolve) => {
+                const timer = setTimeout(resolve, delayMs);
+                timer.unref?.();
+            });
+        }
+        if (signal.aborted) return Promise.resolve(false);
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                signal.removeEventListener("abort", onAbort);
+                resolve(true);
+            }, delayMs);
+            function onAbort() {
+                clearTimeout(timer);
+                resolve(false);
+            }
+            signal.addEventListener("abort", onAbort, { once: true });
+        });
+    };
+
+    const turnAttempts = new Map();
+    const sessionIdOf = (agent) => agent?.session?.id ?? agent?.id ?? null;
+
+    /**
+     * Force the official retry policy first, then add extra continuations after
+     * the official executor declines. This keeps the old maxAttempts knob
+     * meaningful without hidden messages: every extra round is an official
+     * retry action on the same step.
+     */
+    const recover = async (payload, next) => {
         if (!payload || typeof payload !== "object" || typeof next !== "function") return next?.();
         const cfg = readConfig();
         if (!cfg.enabled) return next();
         payload.retryPolicy = resolveRetryPolicy(cfg, payload.retryPolicy);
-        return next();
+        const downstream = await next();
+        if (downstream && downstream.kind === "retry") return downstream;
+        if (payload.signal?.aborted) return downstream;
+        const failure = payload.failure;
+        const agent = payload.agent;
+        if (!failure || !agent) return downstream;
+
+        const classified = classifyContinueFailure(failure);
+        if (cfg.blockedCodes.includes(classified.code) || !cfg.retryableCodes.includes(classified.code)) return downstream;
+
+        const sessionId = sessionIdOf(agent);
+        if (sessionId === null) return downstream;
+        const key = sessionId + ":" + String(Number.isSafeInteger(payload.turn) ? payload.turn : "?");
+        const entry = turnAttempts.get(key) ?? { attempts: 0, halted: false };
+        if (entry.attempts >= cfg.maxAttempts) {
+            if (!entry.halted) {
+                entry.halted = true;
+                turnAttempts.set(key, entry);
+                if (cfg.emitProminentError) {
+                    publish(sessionId, "halt", {
+                        phase: "extra",
+                        attempt: entry.attempts,
+                        max: cfg.maxAttempts,
+                        code: classified.code,
+                        detail: classified.message.slice(0, 300)
+                    });
+                }
+            }
+            return downstream;
+        }
+
+        entry.attempts += 1;
+        turnAttempts.set(key, entry);
+        if (turnAttempts.size > 512) turnAttempts.delete(turnAttempts.keys().next().value);
+        if (cfg.emitProminentError) {
+            publish(sessionId, "retry", {
+                phase: "extra",
+                attempt: entry.attempts,
+                max: cfg.maxAttempts,
+                code: classified.code,
+                detail: classified.message.slice(0, 300)
+            });
+        }
+        if (!await cancellableDelay(cfg.delayMs, payload.signal)) return downstream;
+        if (payload.signal?.aborted) return downstream;
+        return { kind: "retry" };
     };
 
     const disposers = [
-        ctx.on("agent/request-error", override, { prepend: true }),
+        ctx.on("agent/request-error", recover, { prepend: true }),
         ctx.on("session/event", (session, event) => {
             if (!session || !event) return;
+            const prefix = String(session.id) + ":";
+            if (event.type === "turn/start" || event.type === "turn/end") {
+                for (const key of turnAttempts.keys()) {
+                    if (key.startsWith(prefix)) turnAttempts.delete(key);
+                }
+            }
             const cfg = readConfig();
             if (!cfg.enabled || !cfg.emitProminentError) return;
             if (event.type === "llm/retry") {
@@ -213,6 +302,7 @@ export function installAutoContinue(ctx, config) {
                 if (!data || !data.failure) return;
                 const failure = classifyContinueFailure(data.failure);
                 publish(session.id, "retry", {
+                    phase: "provider",
                     attempt: data.retry,
                     max: data.maxRetries,
                     code: failure.code,
@@ -222,12 +312,21 @@ export function installAutoContinue(ctx, config) {
             }
             if (event.type !== "turn/end" || event.data?.reason?.kind !== "error") return;
             const failure = classifyContinueFailure(event.data.reason.error);
-            const kind = cfg.blockedCodes.includes(failure.code) || !cfg.retryableCodes.includes(failure.code) ? "blocked" : "halt";
-            publish(session.id, kind, {
+            if (!cfg.blockedCodes.includes(failure.code) && cfg.retryableCodes.includes(failure.code)) return;
+            publish(session.id, "blocked", {
                 code: failure.code,
                 detail: failure.message.slice(0, 300),
                 max: cfg.providerRetryMaxRetries
             });
+        }),
+        ctx.on("agent/disposed", ({ agent } = {}) => {
+            const sessionId = sessionIdOf(agent);
+            if (sessionId === null) return;
+            const prefix = String(sessionId) + ":";
+            for (const key of turnAttempts.keys()) {
+                if (key.startsWith(prefix)) turnAttempts.delete(key);
+            }
+            notices.delete(sessionId);
         })
     ];
 

@@ -36,6 +36,7 @@ async function checkHostEntry() {
     assert(engine.includes("payload.retryPolicy = resolveRetryPolicy"), "auto-continue must override the official retry policy on the payload");
     assert(engine.includes("prepend: true"), "the override must run before the official retry listener");
     assert(engine.includes('"llm/retry"'), "notices must observe the official retry event");
+    assert(engine.includes('return { kind: "retry" }'), "extra continuations must use the official retry action");
     for (const needle of ["runtime-context", "api-session/error", "followup("]) {
         assert(!engine.includes(needle), `auto-continue must not use the non-public surface: ${needle}`);
     }
@@ -79,24 +80,30 @@ function checkClientArtifact() {
         assert(client.includes(needle), `client.js lost required surface: ${needle}`);
     }
 
-    // Cockpit UI: download card, cleanup settings section and the
+    // Cockpit UI: download card, archive-page cleanup slot and the
     // right-aligned composer button that sends an ordinary user message.
     for (const needle of [
         'id: "cockpit-download-activity"',
         'name: "conversation.session.header.utilities"',
         'name: "conversation.input.dock"',
         'id: "cockpit-cleanup"',
-        'name: "settings.section"',
+        'name: "archive-manager.cleanup"',
         "api/cockpit/downloads",
         "api/cockpit/empty-sessions",
-        "emptyCleanupTitle",
+        "cleanupTitle",
         "清理本项目的临时产物",
         "binding.session.prompt",
         'id: "cockpit-composer-bar"',
         'id: "auto-continue"',
         'name: "settings.plugins.tab"',
         "api/cockpit/auto-continue",
-        "noticeRetry"
+        "noticeRetry",
+        "noticeExtra",
+        "archive-manager.cleanup",
+        'renderSlot?.("archive-manager.cleanup"',
+        "最多尝试次数",
+        "额外续轮次数",
+        "= 1 + "
     ]) {
         assert(client.includes(needle), `client.js lost cockpit UI surface: ${needle}`);
     }
@@ -164,7 +171,7 @@ function checkLocaleMeta() {
 function checkManifest() {
     const pkg = JSON.parse(read("./package.json"));
     assert(pkg.name === "dsh-cockpit", "package name must stay dsh-cockpit");
-    assert(pkg.version === "3.1.4", "package.json version must stay 3.1.4");
+    assert(pkg.version === "3.2.0", "package.json version must stay 3.2.0");
     assert(pkg.dsh?.bundle?.patch === "./cordis.patch.yml", "dsh.bundle.patch must point at cordis.patch.yml");
     assert(pkg.dsh?.client?.platform === "web", "dsh.client.platform must stay web");
 

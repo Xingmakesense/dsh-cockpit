@@ -12,18 +12,18 @@
 | `maintenance.js` | 删除审计落盘与轮转、孤儿附件清扫、定时器 | 不改会话/归档状态 |
 | `downloads.js` | Host 下载字节观测、文件名解析与同源快照路由 | 不拦截保存路径，不重复下载文件 |
 | `client.js` | 生成物，勿手改 | — |
-| `scripts/client-wrapper.js` | 续轮提示、续轮设置页、下载卡片、清理设置分区、「清理临时产物」按钮 | 不写续轮状态机或归档 Host 逻辑 |
+| `scripts/client-wrapper.js` | 续轮提示、续轮设置页、下载卡片、归档页顶部的清理块、「清理临时产物」按钮 | 不写续轮状态机或归档 Host 逻辑 |
 | `vendor/archive-manager/` | 归档实现（Apache-2.0） | 不与仓库其他部分循环依赖 |
 | `vendor/schemastery.mjs`、`vendor/cosmokit.mjs` | Config 使用的原生 schema 副本（MIT） | 仅替换 import 路径，不改实现 |
 
 ## 2. 关键契约（改代码前必读）
 
-1. **续轮覆盖官方策略，但由官方执行。** 以 `prepend: true` 监听 `agent/request-error`，把 `payload.retryPolicy` 替换为 `resolveRetryPolicy(...)`（`mode: "normal"`、`maxRetries`、`retryableCodes`、`initialDelayMs`、`maxDelayMs`、`jitterRatio`），再调用 `next()`。官方 `dsh-llm-retry` 负责退避、取消与 `llm/retry` 持久化事件。不要自己返回 `{kind:"retry"}` 绕过执行器，也不要伪造 `runtime-context` 消息。
+1. **续轮覆盖官方策略，再由官方执行，最后追加额外续轮。** 以 `prepend: true` 监听 `agent/request-error`，把 `payload.retryPolicy` 替换为 `resolveRetryPolicy(...)`（`maxRetries = providerRetryMaxRetries`），再调用 `next()`。官方 `dsh-llm-retry` 负责退避、取消与 `llm/retry` 持久化事件；官方重试用尽后，本插件按 Turn 计数返回官方动作 `{kind:"retry"}`，最多 `maxAttempts` 次。不要伪造 `runtime-context` 消息。
 2. **不可重试码从集合中剔除。** `blockedCodes` 必须从覆盖后的 `retryableCodes` 中移除；否则官方执行器仍会重试。
-3. **续轮提示来自官方事件。** `session/event` 的 `llm/retry` 提供服务端已接受的重试进度，`turn/end reason.kind = "error"` 提供最终失败；据此发布提示，客户端轮询 `GET /api/cockpit/auto-continue`。提示与清理按钮共用同一个固定高度 dock 行，避免提示出现时改变布局高度。
+3. **续轮提示来自官方事件与额外续轮层。** 官方 `llm/retry` 提供 `phase: "provider"` 的重试进度；本插件的额外续轮发布 `phase: "extra"`；`turn/end reason.kind = "error"` 为不可重试错误提供 `blocked` 提示。客户端轮询 `GET /api/cockpit/auto-continue`，提示与清理按钮共用 32px 固定高度 dock 行。
 4. **Config 必须原生 volatile。** `Config` 来自 vendored schemastery 且根节点 `.volatile()`，否则 `ctx.settings.describe()` 会静默跳过本插件；设置页必须走 `ctx.remote.settings`（返回 `RemoteResult`）。
 5. **用户消息发送。** 客户端发送普通用户消息用 `sessions.binding(sessionId).session.prompt(content, "queue")`；`queue` 等价于用户回车，`steer` 是中途引导。按钮固定发送 `清理本项目的临时产物`。
-6. **按钮位置。** `conversation.input.dock` 渲染在输入框卡片上方（卡片外侧，宽度与卡片一致），按钮左对齐；该行高度固定为 48px，续轮提示内联在同一行，因此提示出现不会推动按钮或官方回到底部按钮。`conversation.input.left/right/overlay/activity` 位于卡片内侧。
+6. **按钮位置。** `conversation.input.dock` 渲染在输入框卡片上方（卡片外侧，宽度与卡片一致），按钮左对齐；该行高度固定为 32px，续轮提示内联在同一行，因此提示出现不会推动按钮或官方回到底部按钮。`conversation.input.left/right/overlay/activity` 位于卡片内侧。
 7. **会话菜单宿主探测。** 会话右键菜单由 `ctx.contextMenus` 托管，`sidebar.workspaces.session.menu.item` 槽声明在 `contextMenu.content`（key `session`）下。vendored 客户端的模式探测必须同时接受 `contextMenu.content` 与 `sidebar.workspaces` 两种声明位置，并在两者变化时重新协调。
 8. **删除审计事件**：vendored 归档 host 发出 `archive-manager/session-deleted`，`maintenance.js` 落盘；改 vendored 删除流程时保持该事件。
 9. **附件清理安全阀**：任一转录读取失败、zstd 帧不完整或会话根为空时整轮放弃；扫描必须逐帧解码并仅保留引用哈希。
@@ -46,11 +46,12 @@
 |---|---|---|
 | `enabled` | `false`（patch 设为 `true`） | 是否覆盖官方重试策略 |
 | `providerRetryMaxRetries` | `3` | 覆盖后的 `retryPolicy.maxRetries`，对所有提供方生效 |
+| `maxAttempts` | `6` | 官方重试结束后额外续轮次数 |
 | `delayMs` | `1500` | 覆盖后的 `initialDelayMs` |
 | `emitProminentError` | `true` | 是否发布提示快照 |
 | `retryableCodes` / `blockedCodes` | 见 `CONTINUE_DEFAULTS` | 参与/不参与重试的故障码 |
 
-修改字段时同步：`auto-continue.js`、`client-wrapper.js` 的 `pickValues` / `NUMERIC_FIELDS` / `save`、测试与 README、以及 `cordis.patch.yml`。
+修改字段时同步：`auto-continue.js`、`client-wrapper.js` 的 `pickValues` / `NUMERIC_FIELDS` / `save` / 公式、测试与 README、以及 `cordis.patch.yml`。
 
 ## 4. 测试矩阵
 
@@ -59,7 +60,7 @@
 | `node verify-cockpit.cjs` | host 入口与 Config、策略覆盖契约、client 产物一致性、会话菜单探测、manifest/patch |
 | `node verify-auto-continue.cjs` | prepend 顺序、策略替换、blocked 码剔除、官方 `llm/retry` 与 `turn/end` 提示、快照路由 |
 | `node verify-archive.cjs` | 归档纯函数（缺失 `seq`、Unicode 检索、截断、日期、错误分类） |
-| `node verify-client-ui.cjs` | stub loader 评估 `client.js`：续轮提示、设置页、清理分区、按钮发送路径与主题 token |
+| `node verify-client-ui.cjs` | stub loader 评估 `client.js`：续轮提示、设置页、归档页顶部清理块、按钮发送路径与主题 token |
 | `node verify-downloads.cjs` | Host 附件响应包装、真实字节计数、文件名/后缀、完成状态与快照 |
 | `node verify-maintenance.cjs` | 审计落盘、附件引用/孤儿/宽限期、多帧与损坏 zstd、空 home 安全阀 |
 | `node verify-theme-tokens.cjs` | `client-wrapper.js` 只引用 DSH 真实存在的 `--dsw-*` 变量；两套主题对比度达标 |
@@ -79,7 +80,7 @@
    ```
 
 6. 安装到测试 profile，完全重启 DSH；
-7. 验证：设置 → 插件 → 自动续轮可读写；设置 → 会话清理可预览/删除；归档页可打开；右键菜单「删除会话」可用；输入框上方按钮能发出消息；下载时显示卡片；
+7. 验证：设置 → 插件 → 自动续轮可读写；归档页顶部清理块可预览/删除；右键菜单「删除会话」可用；输入框上方按钮能发出消息；下载时显示卡片；
 8. 提交（Conventional Commits）并打 tag。
 
 ## 6. 更新 vendored 归档实现

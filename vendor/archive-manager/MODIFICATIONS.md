@@ -36,3 +36,8 @@ retains the upstream implementation. `dsh-cockpit` regenerates the shipped
     `slots.entries`, and also reconciles when `contextMenu.content` changes.
     Probing only `sidebar.workspaces` demoted the plugin to its vendored
     sidebar, which moved the permanent-delete row out of the native menu.
+
+12. `lib/client.js` — the archive settings section declares a root
+    `archive-manager.cleanup` child slot and renders it above the archive
+    content, so dsh-cockpit can place the compact empty-session cleanup block
+    at the top of the archive page instead of a separate settings page.

@@ -9,7 +9,7 @@
 // Two Cordis plugins are mounted here:
 //   1. the vendored archive-manager client (`@michengai/dsh-archive-manager`),
 //   2. the cockpit UI: the auto-continue notice, the download card, the
-//      auto-continue settings page, the session-cleanup settings section and
+//      auto-continue settings page, the archive-page cleanup block and
 //      the "clean temporary artifacts" button above the composer.
 // ---------------------------------------------------------------------------
 window.__ModuleLoader__.load({
@@ -28,9 +28,8 @@ window.__ModuleLoader__.load({
 
         const DICTS = {
             zh: {
-                cleanupSection: "会话清理",
-                cleanupTitle: "会话清理",
-                cleanupDescription: "预览并永久删除空对话，以及没有被任何父会话引用的子会话（幽灵会话）；删除前会显示候选数量并要求确认。",
+                cleanupTitle: "空对话清理",
+                cleanupDescription: "删除空对话，以及没有父会话引用的子会话（幽灵会话）。先预览，确认后永久删除。",
                 emptyCleanup: "清理",
                 emptyNone: "没有需要清理的会话",
                 emptyConfirm: "发现 {empty} 个空对话、{ghost} 个幽灵会话，将永久删除（跳过 {skipped} 项）。此操作不可恢复。",
@@ -45,12 +44,17 @@ window.__ModuleLoader__.load({
                 sendFailed: "发送失败：",
                 tab: "自动续轮",
                 title: "自动续轮",
-                description: "覆盖官方提供方重试策略：失败请求按本页设置的请求重试上限自动重试，重试由官方重试执行器完成；不会写入任何对话消息。",
+                description: "请求失败后自动重试：先按单次请求重试次数重试，仍失败时再额外续轮。不会向对话写入任何消息。",
                 enabled: "启用自动续轮",
-                providerRetryMaxRetries: "请求重试上限",
+                providerRetryMaxRetries: "单次请求重试次数",
+                maxAttempts: "额外续轮次数",
                 delayMs: "续轮延迟（毫秒）",
                 prominent: "显示自动续轮提示",
-                retryHint: "官方 retryPolicy 会被本页设置覆盖：请求最多重试 {max} 次，初始延迟 {delay} ms。",
+                retryHint: "覆盖官方重试策略：每次请求最多重试 {provider} 次；官方重试结束后，再额外续轮 {max} 次。",
+                formulaTitle: "最多尝试次数",
+                formula: "1 次首发请求 + {provider} 次请求重试 + {max} 次额外续轮",
+                requestUnit: "次请求",
+                noticeExtra: "额外续轮",
                 save: "保存",
                 saving: "保存中…",
                 saved: "已保存",
@@ -67,9 +71,8 @@ window.__ModuleLoader__.load({
                 attempt: "第 {attempt}/{max} 次"
             },
             en: {
-                cleanupSection: "Session cleanup",
-                cleanupTitle: "Session cleanup",
-                cleanupDescription: "Preview and permanently delete empty chats and subagent sessions no parent references (ghost sessions). The candidate count is shown before you confirm.",
+                cleanupTitle: "Empty chat cleanup",
+                cleanupDescription: "Delete empty chats and subagent sessions no parent references (ghost sessions). Preview first, then delete permanently.",
                 emptyCleanup: "Clean",
                 emptyNone: "Nothing to clean up",
                 emptyConfirm: "{empty} empty chats and {ghost} ghost sessions will be permanently deleted ({skipped} skipped). This cannot be undone.",
@@ -84,12 +87,17 @@ window.__ModuleLoader__.load({
                 sendFailed: "Send failed: ",
                 tab: "Auto-continue",
                 title: "Auto-continue",
-                description: "Override the official provider retry policy: failed requests retry with the configured request limit, executed by the official retry engine. No chat message is written.",
+                description: "Retry failed requests automatically: first the provider retry limit, then extra continuations. No chat message is written.",
                 enabled: "Enable auto-continue",
-                providerRetryMaxRetries: "Request retry limit",
+                providerRetryMaxRetries: "Retries per request",
+                maxAttempts: "Extra continuations",
                 delayMs: "Delay (ms)",
                 prominent: "Show auto-continue notices",
-                retryHint: "The official retryPolicy is replaced by these settings: up to {max} request retries with a {delay} ms initial delay.",
+                retryHint: "The official retry policy is replaced here: up to {provider} retries per request, then up to {max} extra continuations.",
+                formulaTitle: "Maximum attempts",
+                formula: "1 first request + {provider} request retries + {max} extra continuations",
+                requestUnit: "requests",
+                noticeExtra: "Extra continuation",
                 save: "Save",
                 saving: "Saving…",
                 saved: "Saved",
@@ -578,6 +586,7 @@ window.__ModuleLoader__.load({
         // -------------------------------------------------------------------
         const NUMERIC_FIELDS = [
             ["providerRetryMaxRetries", 0, 10, 1],
+            ["maxAttempts", 1, 50, 1],
             ["delayMs", 0, 60000, 100]
         ];
 
@@ -586,6 +595,7 @@ window.__ModuleLoader__.load({
             return {
                 enabled: source.enabled === true,
                 providerRetryMaxRetries: Number.isFinite(source.providerRetryMaxRetries) ? source.providerRetryMaxRetries : 3,
+                maxAttempts: Number.isFinite(source.maxAttempts) ? source.maxAttempts : 6,
                 delayMs: Number.isFinite(source.delayMs) ? source.delayMs : 1500,
                 emitProminentError: source.emitProminentError !== false
             };
@@ -637,7 +647,7 @@ window.__ModuleLoader__.load({
                 try {
                     const ops = [];
                     const current = pickValues(state.view.value);
-                    for (const key of ["enabled", "emitProminentError", "providerRetryMaxRetries", "delayMs"]) {
+                    for (const key of ["enabled", "emitProminentError", "providerRetryMaxRetries", "maxAttempts", "delayMs"]) {
                         if (state.draft[key] !== current[key]) ops.push({ op: "set", path: [key], value: state.draft[key] });
                     }
                     if (ops.length === 0) {
@@ -665,6 +675,7 @@ window.__ModuleLoader__.load({
             const draft = state.draft ?? pickValues(undefined);
             const busy = saveState === "saving";
             const incomplete = NUMERIC_FIELDS.some(([key]) => draft[key] === "");
+            const total = 1 + Number(draft.providerRetryMaxRetries || 0) + Number(draft.maxAttempts || 0);
 
             return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
                 h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("title")),
@@ -712,9 +723,18 @@ window.__ModuleLoader__.load({
                             h("span", { style: { fontSize: 13 } }, t("prominent"))
                         ),
                         h("div", { style: { marginTop: 14, fontSize: 12, lineHeight: 1.6, color: THEME.textSecondary } },
-                            t("retryHint", { max: draft.providerRetryMaxRetries, delay: draft.delayMs }))
+                            t("retryHint", { provider: draft.providerRetryMaxRetries, max: draft.maxAttempts }))
                     )
                     : null,
+                h("div", { style: { ...cardBase, marginTop: 16, padding: "16px 18px", boxShadow: "none", background: THEME.sunken } },
+                    h("div", { style: { fontSize: 12, letterSpacing: 1, textTransform: "uppercase", color: THEME.textSecondary, marginBottom: 8 } }, t("formulaTitle")),
+                    h("div", { style: { fontSize: 14, lineHeight: 1.7, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" } },
+                        h("div", null, t("formula", { provider: draft.providerRetryMaxRetries, max: draft.maxAttempts })),
+                        h("div", { style: { marginTop: 6, color: THEME.textSecondary } },
+                            "= 1 + " + draft.providerRetryMaxRetries + " + " + draft.maxAttempts + " = " + total),
+                        h("div", { style: { marginTop: 6, fontSize: 20, fontWeight: 700 } }, total + " " + t("requestUnit"))
+                    )
+                ),
                 h("div", { style: { display: "flex", gap: 10, marginTop: 16, alignItems: "center" } },
                     h("button", { type: "button", onClick: save, disabled: busy || incomplete || state.phase !== "ready", style: { ...buttonStyle, opacity: busy || incomplete || state.phase !== "ready" ? 0.55 : 1 } },
                         busy ? t("saving") : t("save")),
@@ -755,7 +775,7 @@ window.__ModuleLoader__.load({
             const label = phase.status === "sending" ? t("sending") : phase.status === "sent" ? t("sent") : t("cleanTemp");
             const retry = notice?.kind === "retry";
             const accent = retry ? THEME.warnText : notice?.kind === "blocked" ? THEME.accent : THEME.dangerText;
-            const title = retry ? t("noticeRetry") : notice?.kind === "halt" ? t("noticeHalt") : t("noticeBlocked");
+            const title = retry ? (notice?.phase === "extra" ? t("noticeExtra") : t("noticeRetry")) : notice?.kind === "halt" ? t("noticeHalt") : t("noticeBlocked");
             const reason = notice ? chineseFailureReason(notice) : "";
             const detail = notice && notice.code
                 ? [
@@ -791,7 +811,7 @@ window.__ModuleLoader__.load({
                             gap: 6,
                             flex: "1 1 auto",
                             minWidth: 0,
-                            height: 34,
+                            height: 26,
                             boxSizing: "border-box",
                             padding: "0 10px",
                             borderRadius: 999,
@@ -826,8 +846,8 @@ window.__ModuleLoader__.load({
                     width: "calc(100% - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-dock-inset, 8px) - var(--dsh-composer-dock-inset, 8px))",
                     maxWidth: "calc(var(--dsh-composer-card-max-width, 760px) - var(--dsh-composer-dock-inset, 8px) - var(--dsh-composer-dock-inset, 8px))",
                     margin: "0 auto",
-                    height: 48,
-                    minHeight: 48,
+                    height: 32,
+                    minHeight: 32,
                     boxSizing: "border-box"
                 }
             },
@@ -841,7 +861,7 @@ window.__ModuleLoader__.load({
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    height: 48,
+                    height: 32,
                     padding: "0 12px",
                     fontSize: 14,
                     lineHeight: "20px",
@@ -858,30 +878,25 @@ window.__ModuleLoader__.load({
 
 
 
-        // Settings section: the empty-session cleanup used to live above the
-        // auto-continue form. It is a first-class section now.
-        function CleanupSection({ t, getWorkspaceRegistry }) {
-            return h("section", { style: { maxWidth: 760, padding: "4px 2px 32px" } },
-                h("h2", { style: { fontSize: 20, margin: "0 0 6px" } }, t("cleanupTitle")),
-                h("p", { style: { margin: "0 0 18px", fontSize: 13, color: THEME.textSecondary } }, t("cleanupDescription")),
-                h("div", {
-                    style: {
-                        ...cardBase,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        flexWrap: "wrap",
-                        gap: 16,
-                        padding: "14px 16px",
-                        boxShadow: "none"
-                    }
-                },
-                h("div", { style: { flex: "1 1 260px", minWidth: 0 } },
-                    h("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 4 } }, t("emptyCleanupTitle")),
-                    h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("emptyCleanupDescription"))
-                ),
-                h(EmptySessionCleanup, { t, getWorkspaceRegistry })
-                )
+        // Compact cleanup block rendered at the top of the archive page.
+        function CleanupBlock({ t, getWorkspaceRegistry }) {
+            return h("div", {
+                style: {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    flexWrap: "wrap",
+                    padding: "0 0 10px",
+                    marginBottom: 10,
+                    borderBottom: "1px solid " + THEME.border
+                }
+            },
+            h("div", { style: { flex: "1 1 240px", minWidth: 0 } },
+                h("div", { style: { fontSize: 13, fontWeight: 600, color: THEME.text, marginBottom: 2 } }, t("cleanupTitle")),
+                h("div", { style: { fontSize: 12, lineHeight: 1.5, color: THEME.textSecondary } }, t("cleanupDescription"))
+            ),
+            h(EmptySessionCleanup, { t, getWorkspaceRegistry })
             );
         }
 
@@ -940,15 +955,12 @@ window.__ModuleLoader__.load({
                             })
                         }, ComposerBar));
 
-                        uiCtx.slots.inject("settings.section", () => uiCtx.slots.register({
-                            name: "settings.section",
+                        uiCtx.slots.inject("archive-manager.cleanup", () => uiCtx.slots.register({
+                            name: "archive-manager.cleanup",
                             id: "cockpit-cleanup",
-                            order: 46,
-                            label: () => t("cleanupSection"),
-                            icon: "archive",
                             locale: NS,
                             inject: () => ({ t, getWorkspaceRegistry })
-                        }, CleanupSection));
+                        }, CleanupBlock));
 
                         const settings = uiCtx.remote?.settings;
 

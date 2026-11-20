@@ -2110,21 +2110,18 @@ window.__ModuleLoader__.load({
         // button and the current retry notice share the row, so a notice never
         // changes the stack height and can never push this row (or the official
         // scroll-to-bottom control) upward.
-        // The cleanup button only makes sense while a session is idle after its
-        // turn stopped. `stopped` comes from the slot's keyed sessionStatus hook:
-        // true = not running, false = running, undefined = not running yet, so
-        // a never-started session never shows the button.
-        function ComposerBar({ t, send, store, sessionId, useSessionStatus }) {
+        // The cleanup button is always present in an existing conversation.
+        // The new-conversation landing page (hero) has no session yet, or an
+        // empty session whose summary row is marked `blank`; both hide the row.
+        function ComposerBar({ t, send, store, sessionId, useSessions }) {
             const [phase, setPhase] = React.useState({ status: "idle", error: "" });
-            // The cleanup button appears only after a turn stopped. The
-            // official session status row carries `running`; a session that
-            // never started has no row, so the button stays hidden.
-            const statusOf = typeof useSessionStatus === "function"
-                ? useSessionStatus((status) => status?.get?.(sessionId))
+            // `blank` is the official summary flag for a conversation with no
+            // user content. Hide only on that splash page; running/idle sessions
+            // keep the button permanently.
+            const blank = typeof useSessions === "function"
+                ? useSessions((snapshot) => sessionId === undefined ? undefined : snapshot?.byId?.[sessionId]?.blank)
                 : undefined;
-            const stopped = statusOf !== undefined && statusOf !== null && typeof statusOf === "object"
-                ? statusOf.running === false
-                : false;
+            const onSplash = sessionId === undefined || blank !== false;
             const notices = React.useSyncExternalStore(store.subscribe, store.get, store.get);
             const relevant = sessionId === undefined ? notices : notices.filter((notice) => notice.sessionId === sessionId);
             const notice = relevant[relevant.length - 1];
@@ -2210,7 +2207,7 @@ window.__ModuleLoader__.load({
                     )
                     : null;
 
-            const buttonVisible = stopped === true;
+            const buttonVisible = !onSplash;
             if (!buttonVisible && notice === null && phase.status === "idle") return null;
 
             return h("div", {
@@ -3136,12 +3133,7 @@ window.__ModuleLoader__.load({
                                 t,
                                 store: noticeStore,
                                 sessionId,
-                                send: () => sendUserText(uiCtx.sessions, sessionId, CLEAN_TEMP_MESSAGE),
-                                hooks: {
-                                    // Reactive session status from the shell: no polling
-                                    // and no extra transport.
-                                    sessionStatus: () => uiCtx.sessions.list
-                                }
+                                send: () => sendUserText(uiCtx.sessions, sessionId, CLEAN_TEMP_MESSAGE)
                             })
                         }, ComposerBar));
 

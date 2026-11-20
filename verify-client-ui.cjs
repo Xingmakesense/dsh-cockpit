@@ -320,16 +320,18 @@ async function main() {
     assert(typeof dockProps.send === "function", "composer row must receive its send action");
     assert(dockProps.store !== undefined, "composer row must receive the notice store");
     dockProps.store.replace([{ id: "ac-1", sessionId: "session-1", kind: "retry", at: Date.now(), expiresAt: null, code: "TIMEOUT", detail: "timeout", attempt: 1, max: 2 }]);
-    // A session that never ran (no status row) must still show an active
-    // retry notice, but never the cleanup button.
-    const hiddenTree = dock.component({ ...dockProps, t: (key) => key, useSessionStatus: () => undefined });
-    assert(findNode(hiddenTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp") === undefined,
-        "the cleanup button must stay hidden before any turn stopped");
-    const runningTree = dock.component({ ...dockProps, t: (key) => key, useSessionStatus: (selector) => selector(new Map([["session-1", { running: true }]])) });
-    assert(runningTree !== null, "a retry notice must still render while the session runs");
-    assert(findNode(runningTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp") === undefined,
-        "the cleanup button must stay hidden while the session is running");
-    const buttonTree = dock.component({ ...dockProps, t: (key) => key, useSessionStatus: (selector) => selector(new Map([["session-1", { running: false }]])) });
+    // New-conversation splash: no session id hides the button; an active retry
+    // notice still renders. A blank summary row also counts as the splash.
+    const noSessionTree = dock.component({ ...dockProps, sessionId: undefined, t: (key) => key, useSessions: () => undefined });
+    assert(findNode(noSessionTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp") === undefined,
+        "the cleanup button must stay hidden on the new-conversation splash");
+    const blankTree = dock.component({ ...dockProps, t: (key) => key, useSessions: (selector) => selector({ byId: { "session-1": { blank: true } } }) });
+    assert(findNode(blankTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp") === undefined,
+        "a blank session summary must hide the cleanup button");
+    const runningTree = dock.component({ ...dockProps, t: (key) => key, useSessions: (selector) => selector({ byId: { "session-1": { blank: false } } }) });
+    assert(findNode(runningTree, (node) => node.type === "button" && String(textOf(node)) === "cleanTemp") !== undefined,
+        "the cleanup button must stay visible in an existing conversation, running or idle");
+    const buttonTree = dock.component({ ...dockProps, t: (key) => key, useSessions: (selector) => selector({ byId: { "session-1": { blank: false } } }) });
     assert(titledNodes(buttonTree).length === 0, "the composer row must not use native title tooltips");
     assert(String(buttonTree.props.style?.maxWidth ?? "").includes("--dsh-composer-card-max-width"),
         "the composer row must match the composer card width");
